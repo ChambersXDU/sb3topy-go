@@ -17,11 +17,47 @@ func TestTranspileProject(t *testing.T) {
 		t.Fatalf("Failed to load specmap: %v", err)
 	}
 
-	// Read project.json from workspace root
-	projJson, err := os.ReadFile("../../project.json")
-	if err != nil {
-		t.Fatalf("Failed to read project.json: %v", err)
-	}
+	// Self-contained mock project.json for CI/CD test environment
+	projJson := []byte(`{
+		"targets": [
+			{
+				"isStage": true,
+				"name": "Stage",
+				"variables": {},
+				"lists": {},
+				"broadcasts": {},
+				"blocks": {},
+				"costumes": [],
+				"sounds": [],
+				"layerOrder": 0
+			},
+			{
+				"isStage": false,
+				"name": "玩家",
+				"variables": {
+					"v1": ["玩家血量", 5]
+				},
+				"lists": {
+					"l1": ["武器", ["步枪", "手枪"]]
+				},
+				"broadcasts": {},
+				"blocks": {
+					"b1": {
+						"opcode": "event_whenflagclicked",
+						"next": null,
+						"parent": null,
+						"inputs": {},
+						"fields": {},
+						"shadow": false,
+						"topLevel": true
+					}
+				},
+				"costumes": [],
+				"sounds": [],
+				"layerOrder": 1
+			}
+		]
+	}`)
 
 	pyCode, err := TranspileProject(projJson, sm)
 	if err != nil {
@@ -45,7 +81,7 @@ func TestTranspileProject(t *testing.T) {
 	assertContains(t, pyCode, "if __name__ == '__main__':")
 	assertContains(t, pyCode, "engine.start_program()")
 
-	// Ensure no raw # opcode comments in expressions
+	// Ensure no unhandled opcodes in generated code
 	if strings.Contains(pyCode, "# opcode:") {
 		t.Errorf("Generated code contains unhandled opcodes: %s", pyCode)
 	}
