@@ -1,0 +1,22 @@
+# Binaries & Executables
+sb3topy
+sb3topy.exe
+sb3topy-cli
+bin/
+
+# Temporary & output directories
+output_*/
+test_*/
+game/
+*.sb3
+*.json
+!specmap_data.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
