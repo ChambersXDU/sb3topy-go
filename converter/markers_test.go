@@ -56,7 +56,7 @@ func TestTranspileProjectAddsScratchSourceMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertContains(t, py, "# sb3topy:target 'Stage'")
+	assertContains(t, py, "# sb3topy:target \"Stage\"")
 	assertContains(t, py, "# sb3topy:hat hat-1 event_whenflagclicked")
 	assertContains(t, py, "# sb3topy:block move-1 motion_movesteps")
 }
