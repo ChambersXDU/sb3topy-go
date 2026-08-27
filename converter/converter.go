@@ -2,9 +2,9 @@ package converter
 
 import (
 	"archive/zip"
-	"embed"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +14,7 @@ import (
 type ConvertOptions struct {
 	SB3Path     string
 	OutputDir   string
-	EngineFS    embed.FS
+	EngineFS    fs.FS
 	SpecmapData []byte
 }
 
@@ -31,101 +31,117 @@ func Run(opts ConvertOptions) error {
 
 	absOutDir, err := filepath.Abs(outputDir)
 	if err != nil {
-		return fmt.Errorf("无法获取输出路径: %w", err)
+		return fmt.Errorf("cannot resolve output directory: %w", err)
 	}
 
-	fmt.Printf("📦 正在转换 SB3 项目: %s\n", sb3Path)
-	fmt.Printf("📁 输出目录: %s\n\n", absOutDir)
+	fmt.Printf("Converting SB3 project: %s\n", sb3Path)
+	fmt.Printf("Output directory: %s\n\n", absOutDir)
 
 	assetsDir := filepath.Join(absOutDir, "assets")
 	engineDir := filepath.Join(absOutDir, "engine")
 
 	if err := os.MkdirAll(assetsDir, 0755); err != nil {
-		return fmt.Errorf("创建 assets 目录失败: %w", err)
+		return fmt.Errorf("cannot create assets directory: %w", err)
 	}
 	if err := os.MkdirAll(engineDir, 0755); err != nil {
-		return fmt.Errorf("创建 engine 目录失败: %w", err)
+		return fmt.Errorf("cannot create engine directory: %w", err)
 	}
 
 	// 2. Unpack SB3 (Zip)
-	fmt.Println("[1/3] 解压并提取资源文件...")
+	fmt.Println("[1/3] Extracting project data and archive entries...")
 	r, err := zip.OpenReader(sb3Path)
 	if err != nil {
-		return fmt.Errorf("无法读取 SB3 文件: %w", err)
+		return fmt.Errorf("cannot open SB3 archive: %w", err)
 	}
 	defer r.Close()
 
 	var projectJsonData []byte
 	assetCount := 0
+	assetEntries := make([]string, 0, len(r.File))
+	seenEntries := make(map[string]bool, len(r.File))
 
 	for _, f := range r.File {
-		rc, err := f.Open()
+		cleanName, isDir, err := validateArchiveEntryName(f.Name)
 		if err != nil {
-			return fmt.Errorf("解压文件 %s 失败: %w", f.Name, err)
+			return err
 		}
+		if seenEntries[cleanName] {
+			return fmt.Errorf("duplicate ZIP entry %q", f.Name)
+		}
+		seenEntries[cleanName] = true
 
-		if f.Name == "project.json" {
-			projectJsonData, err = io.ReadAll(rc)
-			rc.Close()
+		if cleanName == "project.json" {
+			if isDir || f.FileInfo().IsDir() {
+				return fmt.Errorf("project.json must be a regular ZIP entry")
+			}
+			rc, err := f.Open()
 			if err != nil {
-				return fmt.Errorf("读取 project.json 失败: %w", err)
+				return fmt.Errorf("cannot open project.json: %w", err)
+			}
+			projectJsonData, err = io.ReadAll(rc)
+			closeErr := rc.Close()
+			if err != nil {
+				return fmt.Errorf("cannot read project.json: %w", err)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("cannot close project.json ZIP entry: %w", closeErr)
 			}
 			continue
 		}
 
-		// Save asset to assetsDir
-		dstPath := filepath.Join(assetsDir, f.Name)
-		dstFile, err := os.Create(dstPath)
-		if err != nil {
-			rc.Close()
-			return fmt.Errorf("创建资源文件 %s 失败: %w", dstPath, err)
+		entryName := cleanName
+		if isDir || f.FileInfo().IsDir() {
+			entryName += "/"
 		}
-		_, err = io.Copy(dstFile, rc)
-		dstFile.Close()
-		rc.Close()
-		if err != nil {
-			return fmt.Errorf("写入资源文件 %s 失败: %w", dstPath, err)
+		assetEntries = append(assetEntries, entryName)
+		if err := extractZipEntry(f, assetsDir); err != nil {
+			return fmt.Errorf("cannot extract %q: %w", f.Name, err)
 		}
 		assetCount++
 	}
 
 	if len(projectJsonData) == 0 {
-		return fmt.Errorf("SB3 文件中未包含 project.json")
+		return fmt.Errorf("SB3 archive does not contain project.json")
 	}
 
-	fmt.Printf("      已解压 %d 个资源文件到 assets/\n", assetCount)
+	fmt.Printf("      Extracted %d non-project entries into assets/\n", assetCount)
 
 	// 3. Extract Embedded Engine Files
-	fmt.Println("[2/3] 部署 Python 运行时引擎到 engine/...")
+	fmt.Println("[2/3] Installing the Python runtime into engine/...")
 	if err := ExtractEmbeddedFS(opts.EngineFS, "engine", engineDir); err != nil {
-		return fmt.Errorf("提取 engine 引擎文件失败: %w", err)
+		return fmt.Errorf("cannot extract embedded engine files: %w", err)
 	}
 
 	// 4. Compile project.json directly in Go!
-	fmt.Println("[3/3] 原生 Go 编译 project.json 为 project.py...")
+	fmt.Println("[3/3] Compiling project.json into project.py...")
 	sm, err := LoadSpecMap(opts.SpecmapData)
 	if err != nil {
-		return fmt.Errorf("加载 SpecMap 数据失败: %w", err)
+		return fmt.Errorf("cannot load SpecMap data: %w", err)
 	}
 
 	pyCode, err := TranspileProject(projectJsonData, sm)
 	if err != nil {
-		return fmt.Errorf("编译 project.json 失败: %w", err)
+		return fmt.Errorf("cannot compile project.json: %w", err)
 	}
 
 	outPyPath := filepath.Join(absOutDir, "project.py")
 	if err := os.WriteFile(outPyPath, []byte(pyCode), 0644); err != nil {
-		return fmt.Errorf("写入 project.py 失败: %w", err)
+		return fmt.Errorf("cannot write project.py: %w", err)
 	}
 
-	fmt.Printf("\n✅ 原生 Go 转换成功！项目已保存至目录: %s\n", absOutDir)
-	fmt.Printf("🚀 运行项目: cd \"%s\" && python3 project.py\n", outputDir)
+	if err := writeRoundTripMetadataWithAssets(absOutDir, projectJsonData, []byte(pyCode), sb3Path, assetEntries); err != nil {
+		return fmt.Errorf("cannot write round-trip metadata: %w", err)
+	}
+
+	fmt.Printf("\nConversion completed: %s\n", absOutDir)
+	fmt.Printf("Round-trip metadata: %s/\n", roundTripDirName)
+	fmt.Printf("Run the project: cd \"%s\" && python3 project.py\n", outputDir)
 	return nil
 }
 
-// ExtractEmbeddedFS recursively copies embedded files from embed.FS
-func ExtractEmbeddedFS(fs embed.FS, currentDir string, targetBaseDir string) error {
-	entries, err := fs.ReadDir(currentDir)
+// ExtractEmbeddedFS recursively copies files from an fs.FS.
+func ExtractEmbeddedFS(fsys fs.FS, currentDir string, targetBaseDir string) error {
+	entries, err := fs.ReadDir(fsys, currentDir)
 	if err != nil {
 		return err
 	}
@@ -138,11 +154,11 @@ func ExtractEmbeddedFS(fs embed.FS, currentDir string, targetBaseDir string) err
 			if err := os.MkdirAll(targetPath, 0755); err != nil {
 				return err
 			}
-			if err := ExtractEmbeddedFS(fs, currentPath, targetPath); err != nil {
+			if err := ExtractEmbeddedFS(fsys, currentPath, targetPath); err != nil {
 				return err
 			}
 		} else {
-			data, err := fs.ReadFile(currentPath)
+			data, err := fs.ReadFile(fsys, currentPath)
 			if err != nil {
 				return err
 			}

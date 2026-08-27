@@ -87,6 +87,46 @@ func TestTranspileProject(t *testing.T) {
 	}
 }
 
+func TestTranspileProjectPreservesZeroVolumeAndCostumeProperties(t *testing.T) {
+	specData, err := os.ReadFile("../specmap_data.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := LoadSpecMap(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectJSON := []byte(`{
+		"targets": [{
+			"isStage": false,
+			"name": "Sprite",
+			"variables": {},
+			"lists": {},
+			"broadcasts": {},
+			"blocks": {},
+			"currentCostume": 1,
+			"costumes": [
+				{"name":"one","assetId":"one","dataFormat":"png","md5ext":"one.png","bitmapResolution":2,"rotationCenterX":0,"rotationCenterY":3},
+				{"name":"two","assetId":"two","dataFormat":"svg","md5ext":"two.svg","bitmapResolution":1,"rotationCenterX":4,"rotationCenterY":5}
+			],
+			"sounds": [],
+			"volume": 0,
+			"size": 75,
+			"rotationStyle": "left-right",
+			"layerOrder": 1,
+			"visible": true
+		}]
+	}`)
+	py, err := TranspileProject(projectJSON, sm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, py, "           1, 75, \"left-right\", [")
+	assertContains(t, py, "'center': (0, 3)")
+	assertContains(t, py, "'scale': 2")
+	assertContains(t, py, "self.sounds = Sounds(\n            0, [")
+}
+
 func assertContains(t *testing.T, code, sub string) {
 	t.Helper()
 	if !strings.Contains(code, sub) {

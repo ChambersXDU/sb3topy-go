@@ -8,13 +8,13 @@ import (
 
 // BlockSpec defines mapping rules from JSON specmap
 type BlockSpec struct {
-	Type     string            `json:"type"`
-	Args     map[string]string `json:"args"`
-	CodeRaw  interface{}       `json:"code"`
-	CodeStr  string
+	Type      string            `json:"type"`
+	Args      map[string]string `json:"args"`
+	CodeRaw   interface{}       `json:"code"`
+	CodeStr   string
 	CodeLines []string
-	Switch   string            `json:"switch"`
-	Basename string            `json:"basename"`
+	Switch    string `json:"switch"`
+	Basename  string `json:"basename"`
 }
 
 // SpecMap holds opcode to BlockSpec mappings
