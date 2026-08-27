@@ -10,9 +10,13 @@ import (
 
 // TranspileProject transpiles Scratch project.json into a Python project script.
 func TranspileProject(projJsonBytes []byte, sm *SpecMap) (string, error) {
+	if err := validateProjectJSON(projJsonBytes); err != nil {
+		return "", err
+	}
+
 	var proj ProjectJSON
 	if err := json.Unmarshal(projJsonBytes, &proj); err != nil {
-		return "", fmt.Errorf("解析 project.json 失败: %w", err)
+		return "", fmt.Errorf("invalid project.json: %w", err)
 	}
 
 	var sb strings.Builder
@@ -74,8 +78,16 @@ func transpileTarget(target *TargetJSON, sm *SpecMap) (string, error) {
 	sb.WriteString("        self.pen = Pen(self)\n\n")
 
 	// Costumes
+	size := 100.0
+	if target.Size != nil {
+		size = *target.Size
+	}
+	rotationStyle := target.RotationStyle
+	if rotationStyle == "" {
+		rotationStyle = "None"
+	}
 	sb.WriteString("        self.costume = Costumes(\n")
-	sb.WriteString("           0, 100, \"None\", [\n")
+	sb.WriteString(fmt.Sprintf("           %d, %v, %s, [\n", target.CurrentCostume, size, QuoteString(rotationStyle)))
 	for i, c := range target.Costumes {
 		sb.WriteString("            {\n")
 		sb.WriteString(fmt.Sprintf("                'name': %s,\n", QuoteString(c.Name)))
@@ -84,13 +96,12 @@ func transpileTarget(target *TargetJSON, sm *SpecMap) (string, error) {
 			md5 = c.AssetID + "." + c.DataFormat
 		}
 		sb.WriteString(fmt.Sprintf("                'path': %s,\n", QuoteString(md5)))
-		cx := c.CenterX
-		cy := c.CenterY
-		if cx == 0 && c.RotationCenterX != 0 {
-			cx = c.RotationCenterX
+		scale := c.BitmapResolution
+		if scale <= 0 {
+			scale = 1
 		}
-		sb.WriteString(fmt.Sprintf("                'center': (%v, %v),\n", cx, cy))
-		sb.WriteString("                'scale': 1\n")
+		sb.WriteString(fmt.Sprintf("                'center': (%v, %v),\n", c.CenterX, c.CenterY))
+		sb.WriteString(fmt.Sprintf("                'scale': %v\n", scale))
 		if i == len(target.Costumes)-1 {
 			sb.WriteString("            }\n")
 		} else {
@@ -101,9 +112,9 @@ func transpileTarget(target *TargetJSON, sm *SpecMap) (string, error) {
 
 	// Sounds
 	sb.WriteString("        self.sounds = Sounds(\n")
-	vol := target.Volume
-	if vol == 0 {
-		vol = 100
+	vol := 100.0
+	if target.Volume != nil {
+		vol = *target.Volume
 	}
 	sb.WriteString(fmt.Sprintf("            %v, [\n", vol))
 	for i, s := range target.Sounds {
@@ -190,6 +201,59 @@ func transpileTarget(target *TargetJSON, sm *SpecMap) (string, error) {
 	return sb.String(), nil
 }
 
+type markerState struct {
+	emitted map[string]bool
+	pending map[string]bool
+}
+
+func newMarkerState() *markerState {
+	return &markerState{
+		emitted: make(map[string]bool),
+		pending: make(map[string]bool),
+	}
+}
+
+func (s *markerState) queue(blockID string) {
+	if blockID != "" && !s.emitted[blockID] {
+		s.pending[blockID] = true
+	}
+}
+
+func (s *markerState) snapshotPending() map[string]bool {
+	snapshot := make(map[string]bool, len(s.pending))
+	for id := range s.pending {
+		snapshot[id] = true
+	}
+	return snapshot
+}
+
+func (s *markerState) flushSince(sb *strings.Builder, blocksMap map[string]*RawBlockData, indent string, baseline map[string]bool) {
+	ids := make([]string, 0, len(s.pending))
+	for id := range s.pending {
+		if !baseline[id] {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if s.emitted[id] {
+			delete(s.pending, id)
+			continue
+		}
+		block := blocksMap[id]
+		if block == nil {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("%s# sb3topy:block id=%s opcode=%s kind=reporter shadow=%t\n", indent, QuoteString(id), QuoteString(block.Opcode), block.Shadow))
+		s.emitted[id] = true
+		delete(s.pending, id)
+	}
+}
+
+func emitBlockMarker(sb *strings.Builder, indent, id string, block *RawBlockData, kind string) {
+	sb.WriteString(fmt.Sprintf("%s# sb3topy:block id=%s opcode=%s kind=%s shadow=%t\n", indent, QuoteString(id), QuoteString(block.Opcode), kind, block.Shadow))
+}
+
 func transpileTargetBlocks(target *TargetJSON, sm *SpecMap) string {
 	if len(target.Blocks) == 0 {
 		return ""
@@ -213,11 +277,13 @@ func transpileTargetBlocks(target *TargetJSON, sm *SpecMap) string {
 
 	var sb strings.Builder
 	hatIndex := map[string]int{}
+	markers := newMarkerState()
 
 	for _, hatID := range hatIDs {
 		hatBlock := blocksMap[hatID]
 		opcode := hatBlock.Opcode
-		sb.WriteString(fmt.Sprintf("    # sb3topy:hat %s %s\n", hatID, opcode))
+		sb.WriteString(fmt.Sprintf("    # sb3topy:hat id=%s opcode=%s\n", QuoteString(hatID), QuoteString(opcode)))
+		markers.emitted[hatID] = true
 
 		methodName := "green_flag"
 		decorator := "@on_green_flag"
@@ -269,7 +335,7 @@ func transpileTargetBlocks(target *TargetJSON, sm *SpecMap) string {
 				paramsStr = ", " + strings.Join(argNames, ", ")
 			}
 			sb.WriteString(fmt.Sprintf("    async def %s(self, util%s):\n", methodName, paramsStr))
-			bodyCode := transpileBlockStack(hatBlock.Next, blocksMap, sm, "        ")
+			bodyCode := transpileBlockStack(hatBlock.Next, blocksMap, sm, "        ", markers)
 			if bodyCode == "" {
 				bodyCode = "        await self.yield_()\n"
 			}
@@ -286,7 +352,7 @@ func transpileTargetBlocks(target *TargetJSON, sm *SpecMap) string {
 		sb.WriteString(fmt.Sprintf("    %s\n", decorator))
 		sb.WriteString(fmt.Sprintf("    async def %s(self, util):\n", methodName))
 
-		bodyCode := transpileBlockStack(hatBlock.Next, blocksMap, sm, "        ")
+		bodyCode := transpileBlockStack(hatBlock.Next, blocksMap, sm, "        ", markers)
 		if bodyCode == "" {
 			bodyCode = "        await self.yield_()\n"
 		}
@@ -294,26 +360,51 @@ func transpileTargetBlocks(target *TargetJSON, sm *SpecMap) string {
 		sb.WriteString("\n")
 	}
 
+	// Keep a deterministic marker for blocks that are not reachable from a
+	// supported hat. This includes unsupported stacks and otherwise-unused
+	// reporters, so an agent can still locate every valid Scratch block ID.
+	remainingIDs := make([]string, 0, len(blocksMap))
+	for id := range blocksMap {
+		if !markers.emitted[id] {
+			remainingIDs = append(remainingIDs, id)
+		}
+	}
+	sort.Strings(remainingIDs)
+	for _, id := range remainingIDs {
+		emitBlockMarker(&sb, "    ", id, blocksMap[id], "unmapped")
+		markers.emitted[id] = true
+	}
+
 	return sb.String()
 }
 
-func transpileBlockStack(startBlockID interface{}, blocksMap map[string]*RawBlockData, sm *SpecMap, indent string) string {
+func transpileBlockStack(startBlockID interface{}, blocksMap map[string]*RawBlockData, sm *SpecMap, indent string, markers *markerState) string {
 	var sb strings.Builder
 	currID := startBlockID
+	visited := make(map[string]bool)
 
 	for currID != nil {
 		idStr, ok := currID.(string)
 		if !ok || idStr == "" {
 			break
 		}
+		if visited[idStr] {
+			break
+		}
+		visited[idStr] = true
 
 		block, ok := blocksMap[idStr]
 		if !ok {
 			break
 		}
 
-		sb.WriteString(fmt.Sprintf("%s# sb3topy:block %s %s\n", indent, idStr, block.Opcode))
-		line := transpileSingleBlock(block, blocksMap, sm, indent)
+		pendingBefore := markers.snapshotPending()
+		line := transpileSingleBlock(block, blocksMap, sm, indent, markers)
+		markers.flushSince(&sb, blocksMap, indent, pendingBefore)
+		if !markers.emitted[idStr] {
+			emitBlockMarker(&sb, indent, idStr, block, "stack")
+			markers.emitted[idStr] = true
+		}
 		if line != "" {
 			sb.WriteString(line)
 			if !strings.HasSuffix(line, "\n") {
@@ -327,7 +418,7 @@ func transpileBlockStack(startBlockID interface{}, blocksMap map[string]*RawBloc
 	return sb.String()
 }
 
-func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockData, sm *SpecMap, indent string) string {
+func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockData, sm *SpecMap, indent string, markers *markerState) string {
 	opcode := block.Opcode
 
 	// Shadow / Menu blocks return string literal value directly
@@ -343,7 +434,7 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		var body strings.Builder
 		body.WriteString(indent + "while True:\n")
 		subStack := getSubstack(block, "SUBSTACK")
-		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ")
+		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ", markers)
 		if subCode == "" {
 			subCode = indent + "    await self.yield_()\n"
 		}
@@ -352,11 +443,11 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return body.String()
 
 	case "control_repeat":
-		times := transpileInput(block, "TIMES", blocksMap, sm, "10")
+		times := transpileInput(block, "TIMES", blocksMap, sm, "10", markers)
 		var body strings.Builder
 		body.WriteString(fmt.Sprintf("%sfor _ in range(toint(%s)):\n", indent, times))
 		subStack := getSubstack(block, "SUBSTACK")
-		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ")
+		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ", markers)
 		if subCode == "" {
 			subCode = indent + "    await self.yield_()\n"
 		}
@@ -365,11 +456,11 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return body.String()
 
 	case "control_if":
-		cond := transpileInput(block, "CONDITION", blocksMap, sm, "True")
+		cond := transpileInput(block, "CONDITION", blocksMap, sm, "True", markers)
 		var body strings.Builder
 		body.WriteString(fmt.Sprintf("%sif %s:\n", indent, cond))
 		subStack := getSubstack(block, "SUBSTACK")
-		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ")
+		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ", markers)
 		if subCode == "" {
 			subCode = indent + "    pass\n"
 		}
@@ -377,11 +468,11 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return body.String()
 
 	case "control_if_else":
-		cond := transpileInput(block, "CONDITION", blocksMap, sm, "True")
+		cond := transpileInput(block, "CONDITION", blocksMap, sm, "True", markers)
 		var body strings.Builder
 		body.WriteString(fmt.Sprintf("%sif %s:\n", indent, cond))
 		subStack1 := getSubstack(block, "SUBSTACK")
-		subCode1 := transpileBlockStack(subStack1, blocksMap, sm, indent+"    ")
+		subCode1 := transpileBlockStack(subStack1, blocksMap, sm, indent+"    ", markers)
 		if subCode1 == "" {
 			subCode1 = indent + "    pass\n"
 		}
@@ -389,7 +480,7 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 
 		body.WriteString(indent + "else:\n")
 		subStack2 := getSubstack(block, "SUBSTACK2")
-		subCode2 := transpileBlockStack(subStack2, blocksMap, sm, indent+"    ")
+		subCode2 := transpileBlockStack(subStack2, blocksMap, sm, indent+"    ", markers)
 		if subCode2 == "" {
 			subCode2 = indent + "    pass\n"
 		}
@@ -397,11 +488,11 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return body.String()
 
 	case "control_repeat_until":
-		cond := transpileInput(block, "CONDITION", blocksMap, sm, "False")
+		cond := transpileInput(block, "CONDITION", blocksMap, sm, "False", markers)
 		var body strings.Builder
 		body.WriteString(fmt.Sprintf("%swhile not (%s):\n", indent, cond))
 		subStack := getSubstack(block, "SUBSTACK")
-		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ")
+		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ", markers)
 		if subCode == "" {
 			subCode = indent + "    await self.yield_()\n"
 		}
@@ -410,26 +501,26 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return body.String()
 
 	case "control_wait_until":
-		cond := transpileInput(block, "CONDITION", blocksMap, sm, "True")
+		cond := transpileInput(block, "CONDITION", blocksMap, sm, "True", markers)
 		var body strings.Builder
 		body.WriteString(fmt.Sprintf("%swhile not (%s):\n", indent, cond))
 		body.WriteString(indent + "    await self.yield_()\n")
 		return body.String()
 
 	case "control_wait":
-		duration := transpileInput(block, "DURATION", blocksMap, sm, "1")
+		duration := transpileInput(block, "DURATION", blocksMap, sm, "1", markers)
 		return fmt.Sprintf("%sawait self.sleep(%s)", indent, duration)
 
 	case "data_setvariableto":
 		varName := getFieldVal(block, "VARIABLE", "variable")
 		cleanVar := CleanIdentifier(varName, "var")
-		val := transpileInput(block, "VALUE", blocksMap, sm, "0")
+		val := transpileInput(block, "VALUE", blocksMap, sm, "0", markers)
 		return fmt.Sprintf("%sutil.sprites.stage.var_%s = %s", indent, cleanVar, val)
 
 	case "data_changevariableby":
 		varName := getFieldVal(block, "VARIABLE", "variable")
 		cleanVar := CleanIdentifier(varName, "var")
-		val := transpileInput(block, "VALUE", blocksMap, sm, "1")
+		val := transpileInput(block, "VALUE", blocksMap, sm, "1", markers)
 		return fmt.Sprintf("%sutil.sprites.stage.var_%s += %s", indent, cleanVar, val)
 
 	case "data_variable":
@@ -445,13 +536,13 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 	case "data_addtolist":
 		listName := getFieldVal(block, "LIST", "list")
 		cleanList := CleanIdentifier(listName, "list")
-		itemVal := transpileInput(block, "ITEM", blocksMap, sm, "\"\"")
+		itemVal := transpileInput(block, "ITEM", blocksMap, sm, "\"\"", markers)
 		return fmt.Sprintf("%sutil.sprites.stage.list_%s.append(%s)", indent, cleanList, itemVal)
 
 	case "data_itemoflist":
 		listName := getFieldVal(block, "LIST", "list")
 		cleanList := CleanIdentifier(listName, "list")
-		idxVal := transpileInput(block, "INDEX", blocksMap, sm, "1")
+		idxVal := transpileInput(block, "INDEX", blocksMap, sm, "1", markers)
 		return fmt.Sprintf("util.sprites.stage.list_%s[toint(%s)]", cleanList, idxVal)
 
 	case "data_listcontents":
@@ -470,41 +561,41 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return fmt.Sprintf("%sself.delete_clone(util)", indent)
 
 	case "looks_switchcostumeto":
-		costumeVal := transpileInput(block, "COSTUME", blocksMap, sm, "\"\"")
+		costumeVal := transpileInput(block, "COSTUME", blocksMap, sm, "\"\"", markers)
 		return fmt.Sprintf("%sself.costume.switch(%s)", indent, costumeVal)
 
 	case "looks_changeeffectby":
 		effectVal := getFieldVal(block, "EFFECT", "COLOR")
-		changeVal := transpileInput(block, "CHANGE", blocksMap, sm, "25")
+		changeVal := transpileInput(block, "CHANGE", blocksMap, sm, "25", markers)
 		return fmt.Sprintf("%sself.costume.change_effect(%s, %s)", indent, QuoteString(strings.ToLower(effectVal)), changeVal)
 
 	case "sound_play":
-		soundVal := transpileInput(block, "SOUND_MENU", blocksMap, sm, "\"\"")
+		soundVal := transpileInput(block, "SOUND_MENU", blocksMap, sm, "\"\"", markers)
 		return fmt.Sprintf("%sself.sounds.play(%s)", indent, soundVal)
 
 	case "motion_movesteps":
-		steps := transpileInput(block, "STEPS", blocksMap, sm, "10")
+		steps := transpileInput(block, "STEPS", blocksMap, sm, "10", markers)
 		return fmt.Sprintf("%sself.move(%s)", indent, steps)
 
 	case "motion_gotoxy":
-		x := transpileInput(block, "X", blocksMap, sm, "0")
-		y := transpileInput(block, "Y", blocksMap, sm, "0")
+		x := transpileInput(block, "X", blocksMap, sm, "0", markers)
+		y := transpileInput(block, "Y", blocksMap, sm, "0", markers)
 		return fmt.Sprintf("%sself.gotoxy(%s, %s)", indent, x, y)
 
 	case "motion_goto":
-		to := transpileInput(block, "TO", blocksMap, sm, "\"_mouse_\"")
+		to := transpileInput(block, "TO", blocksMap, sm, "\"_mouse_\"", markers)
 		return fmt.Sprintf("%sself.goto(util, %s)", indent, to)
 
 	case "motion_pointtowards":
-		towards := transpileInput(block, "TOWARDS", blocksMap, sm, "\"_mouse_\"")
+		towards := transpileInput(block, "TOWARDS", blocksMap, sm, "\"_mouse_\"", markers)
 		return fmt.Sprintf("%sself.point_towards(util, %s)", indent, towards)
 
 	case "sensing_touchingobject":
-		obj := transpileInput(block, "TOUCHINGOBJECTMENU", blocksMap, sm, "\"_edge_\"")
+		obj := transpileInput(block, "TOUCHINGOBJECTMENU", blocksMap, sm, "\"_edge_\"", markers)
 		return fmt.Sprintf("self.get_touching(util, %s)", obj)
 
 	case "sensing_keypressed":
-		keyOpt := transpileInput(block, "KEY_OPTION", blocksMap, sm, "\"space\"")
+		keyOpt := transpileInput(block, "KEY_OPTION", blocksMap, sm, "\"space\"", markers)
 		keyOpt = strings.Trim(keyOpt, "\"")
 		return fmt.Sprintf("util.inputs[%s]", QuoteString(keyOpt))
 
@@ -529,7 +620,7 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 					}
 				}
 				for _, id := range argIDs {
-					val := transpileInput(block, id, blocksMap, sm, "\"\"")
+					val := transpileInput(block, id, blocksMap, sm, "\"\"", markers)
 					argVals = append(argVals, val)
 				}
 			}
@@ -541,47 +632,47 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return fmt.Sprintf("%sawait self.%s(util%s)", indent, procName, argsStr)
 
 	case "operator_add":
-		v1 := transpileInput(block, "NUM1", blocksMap, sm, "0")
-		v2 := transpileInput(block, "NUM2", blocksMap, sm, "0")
+		v1 := transpileInput(block, "NUM1", blocksMap, sm, "0", markers)
+		v2 := transpileInput(block, "NUM2", blocksMap, sm, "0", markers)
 		return fmt.Sprintf("(tonum(%s) + tonum(%s))", v1, v2)
 
 	case "operator_subtract":
-		v1 := transpileInput(block, "NUM1", blocksMap, sm, "0")
-		v2 := transpileInput(block, "NUM2", blocksMap, sm, "0")
+		v1 := transpileInput(block, "NUM1", blocksMap, sm, "0", markers)
+		v2 := transpileInput(block, "NUM2", blocksMap, sm, "0", markers)
 		return fmt.Sprintf("(tonum(%s) - tonum(%s))", v1, v2)
 
 	case "operator_equals":
-		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "\"\"")
-		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "\"\"")
+		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "\"\"", markers)
+		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "\"\"", markers)
 		return fmt.Sprintf("eq(%s, %s)", v1, v2)
 
 	case "operator_gt":
-		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "0")
-		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "0")
+		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "0", markers)
+		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "0", markers)
 		return fmt.Sprintf("gt(%s, %s)", v1, v2)
 
 	case "operator_lt":
-		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "0")
-		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "0")
+		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "0", markers)
+		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "0", markers)
 		return fmt.Sprintf("lt(%s, %s)", v1, v2)
 
 	case "operator_and":
-		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "False")
-		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "False")
+		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "False", markers)
+		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "False", markers)
 		return fmt.Sprintf("(%s and %s)", v1, v2)
 
 	case "operator_or":
-		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "False")
-		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "False")
+		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "False", markers)
+		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "False", markers)
 		return fmt.Sprintf("(%s or %s)", v1, v2)
 
 	case "operator_not":
-		v := transpileInput(block, "OPERAND", blocksMap, sm, "False")
+		v := transpileInput(block, "OPERAND", blocksMap, sm, "False", markers)
 		return fmt.Sprintf("not %s", v)
 
 	case "operator_join":
-		v1 := transpileInput(block, "STRING1", blocksMap, sm, "\"\"")
-		v2 := transpileInput(block, "STRING2", blocksMap, sm, "\"\"")
+		v1 := transpileInput(block, "STRING1", blocksMap, sm, "\"\"", markers)
+		v2 := transpileInput(block, "STRING2", blocksMap, sm, "\"\"", markers)
 		return fmt.Sprintf("(str(%s) + str(%s))", v1, v2)
 	}
 
@@ -590,7 +681,7 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		args := make(map[string]string)
 		for argName := range spec.Args {
 			if inputVal, ok := block.Inputs[argName]; ok {
-				args[argName] = parseInputValue(inputVal, blocksMap, sm)
+				args[argName] = parseInputValue(inputVal, blocksMap, sm, markers)
 			} else if fieldVal, ok := block.Fields[argName]; ok {
 				args[argName] = parseFieldValue(fieldVal)
 			}
@@ -649,7 +740,7 @@ func getOptionField(block *RawBlockData, key, defaultVal string) string {
 	return getFieldVal(block, key, defaultVal)
 }
 
-func transpileInput(block *RawBlockData, key string, blocksMap map[string]*RawBlockData, sm *SpecMap, defaultVal string) string {
+func transpileInput(block *RawBlockData, key string, blocksMap map[string]*RawBlockData, sm *SpecMap, defaultVal string, markers *markerState) string {
 	if block.Inputs == nil {
 		return defaultVal
 	}
@@ -657,14 +748,14 @@ func transpileInput(block *RawBlockData, key string, blocksMap map[string]*RawBl
 	if !ok {
 		return defaultVal
 	}
-	res := strings.TrimSpace(parseInputValue(val, blocksMap, sm))
+	res := strings.TrimSpace(parseInputValue(val, blocksMap, sm, markers))
 	if res == "" {
 		return defaultVal
 	}
 	return res
 }
 
-func parseInputValue(inputVal interface{}, blocksMap map[string]*RawBlockData, sm *SpecMap) string {
+func parseInputValue(inputVal interface{}, blocksMap map[string]*RawBlockData, sm *SpecMap, markers *markerState) string {
 	slice, ok := inputVal.([]interface{})
 	if !ok || len(slice) == 0 {
 		return ""
@@ -675,7 +766,8 @@ func parseInputValue(inputVal interface{}, blocksMap map[string]*RawBlockData, s
 		if len(slice) >= 2 {
 			if blockID, ok := slice[1].(string); ok {
 				if subBlock, ok := blocksMap[blockID]; ok {
-					expr := transpileSingleBlock(subBlock, blocksMap, sm, "")
+					markers.queue(blockID)
+					expr := transpileSingleBlock(subBlock, blocksMap, sm, "", markers)
 					if expr == "pass" || strings.HasPrefix(expr, "#") || strings.Contains(expr, "\n") {
 						return ""
 					}
@@ -683,7 +775,7 @@ func parseInputValue(inputVal interface{}, blocksMap map[string]*RawBlockData, s
 				}
 			}
 			if innerSlice, ok := slice[1].([]interface{}); ok {
-				return parseInputValue(innerSlice, blocksMap, sm)
+				return parseInputValue(innerSlice, blocksMap, sm, markers)
 			}
 		}
 	}

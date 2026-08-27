@@ -1,6 +1,6 @@
 ---
 name: scratch-sb3-roundtrip
-description: Analyze Scratch 3 projects through sb3topy-generated Python, make only reversible fixes, verify them, and package the result back to .sb3.
+description: Debug or repair Scratch 3 SB3 projects through sb3topy-generated Python while keeping canonical Scratch JSON as the source of truth, then verify and package a reversible result.
 ---
 
 # Scratch SB3 round-trip debugging
@@ -9,9 +9,9 @@ Use this skill when the task is to find or fix a bug in a Scratch 3 project whil
 
 ## Core rule
 
-Treat `.sb3topy/project.json` as the reversible source of truth. Treat `project.py` as the human/agent-friendly analysis view.
+Treat `.sb3topy/project.json` as the reversible source of truth. It is the preserved Scratch `project.json`, including fields unknown to the converter. Treat `project.py` only as the human/agent-friendly analysis view.
 
-Do not assume arbitrary Python can be compiled back into Scratch. A Python-only change is unsafe and must not be packaged as SB3.
+Do not edit `.sb3topy/manifest.json`. Do not assume arbitrary Python can be compiled back into Scratch. This version does not synchronize Python AST edits into Scratch: a Python-only change is unsafe and must not be packaged as SB3.
 
 ## Workflow
 
@@ -40,26 +40,29 @@ Do not assume arbitrary Python can be compiled back into Scratch. A Python-only 
    - clone lifecycle;
    - off-by-one and Scratch/Python type-conversion differences.
 
-   Generated stack blocks include comments such as:
+   Generated blocks include machine-readable source associations such as:
 
    ```python
-   # sb3topy:block BLOCK_ID motion_movesteps
+   # sb3topy:block id="BLOCK_ID" opcode="motion_movesteps" kind=stack shadow=false
    self.move(10)
    ```
 
-   Use `BLOCK_ID` to find the exact Scratch block in `.sb3topy/project.json`.
+   Hats use `# sb3topy:hat id="..." opcode="..."`. Reporter, shadow, unsupported, and unreachable blocks also have one source association; inspect `kind=reporter`, `kind=unmapped`, and `shadow=true`. Use the quoted block ID to find the exact key under the relevant target's `blocks` object in `.sb3topy/project.json`. Do not identify blocks by opcode alone because many blocks can share an opcode.
 
 4. Classify the bug before editing.
 
-   - **Scratch-project bug**: the behavior can be expressed with Scratch blocks or Scratch target properties. Make the change in the round-trip JSON.
-   - **transpiler/runtime bug**: the generated Python is wrong even though the Scratch project is correct. Fix the Go converter or Python engine instead. Do not disguise an engine fix as a Scratch-project change.
-   - **unsupported reverse edit**: the desired Python change introduces arbitrary Python, new imports, new helper functions, or control flow that has no Scratch representation. Do not attempt `to-sb3`.
+   - **Scratch-project bug**: the canonical Scratch data already expresses the faulty behavior. Make the smallest change in `.sb3topy/project.json`.
+   - **converter bug**: canonical Scratch data is correct but generated Python is wrong. Fix or report the Go transpiler; do not alter the Scratch project to conceal it.
+   - **Python engine bug**: generated Python represents the Scratch block correctly but runtime behavior is wrong. Fix or report `engine/`; do not alter canonical Scratch data to conceal it.
+   - **unsupported Scratch block**: a marker exists but generated code is `pass`, incomplete, or semantically wrong because the opcode is unsupported. Report the opcode and block ID separately from a project bug.
+   - **unsupported reverse edit**: the desired change introduces Python-only imports, helpers, control flow, or expressions with no exact Scratch representation. Do not attempt `to-sb3`.
 
 5. For a reversible Scratch-project fix:
 
-   - Use `project.py` to reason about the bug and prototype the intended logic.
+   - Use `project.py` to reason about the bug. Keep any Python prototype outside generated `project.py`.
    - Locate the corresponding block ID or target property in `.sb3topy/project.json`.
-   - Edit only the canonical Scratch JSON representation.
+   - Record the target name, block ID, original value, and intended value before editing.
+   - Edit only the canonical Scratch JSON representation. Preserve unrelated object members and IDs.
    - Regenerate Python:
 
      ```bash
@@ -68,7 +71,7 @@ Do not assume arbitrary Python can be compiled back into Scratch. A Python-only 
 
    - Re-read the regenerated Python and confirm it matches the intended fix.
 
-   Never run an auto-formatter over the generated `project.py`; verification is intentionally strict apart from line endings.
+   Never run an auto-formatter over generated `project.py`; verification is intentionally strict apart from line endings. Never update manifest hashes manually; `sync` does that after successfully regenerating Python.
 
 6. Verify before packaging:
 
@@ -84,6 +87,8 @@ Do not assume arbitrary Python can be compiled back into Scratch. A Python-only 
 
 8. Open `repaired.sb3` in Scratch and test the original reproduction steps.
 
+If `verify` or `to-sb3` fails, do not deliver the SB3 as repaired. Preserve the original input and report the failure category.
+
 ## Safe edit boundaries
 
 Usually safe when represented in `.sb3topy/project.json`:
@@ -93,6 +98,8 @@ Usually safe when represented in `.sb3topy/project.json`:
 - sprite x/y/direction/visibility/layer;
 - existing broadcasts;
 - existing costume/sound metadata when the referenced asset is still present.
+
+Prefer literal, field, initial-value, and target-property edits. Keep block IDs and graph links unchanged unless the requested repair genuinely requires graph surgery.
 
 Treat these as unsafe in the first round-trip implementation unless you intentionally edit the Scratch block graph and then validate it:
 - adding or deleting block objects;
@@ -127,7 +134,7 @@ Do not invent an empty placeholder asset.
 
 ### Unsupported or malformed block graph
 
-Symptoms include missing parent/next targets, a substack pointing at a nonexistent block, or Scratch refusing to open the packaged file.
+Symptoms include missing `parent`/`next` targets, an input or SUBSTACK pointing at a nonexistent block, inconsistent parent-child links, a top-level block with an invalid parent, or a cycle.
 
 Recovery:
 - compare the edited block object with the original copy;
@@ -139,7 +146,10 @@ Recovery:
 
 When you finish, report:
 - the observed bug and reproduction path;
-- the Scratch block IDs or target properties changed;
+- the affected stage/sprite;
+- every Scratch block ID or target property changed;
+- each original value and replacement value;
+- why the change fixes the bug;
 - why the change is reversible;
 - the result of `verify`;
 - the output SB3 path;

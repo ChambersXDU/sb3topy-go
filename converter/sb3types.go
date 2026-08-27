@@ -9,32 +9,34 @@ type ProjectJSON struct {
 
 // TargetJSON represents a Target (Stage or Sprite) in project.json
 type TargetJSON struct {
-	IsStage     bool                   `json:"isStage"`
-	Name        string                 `json:"name"`
-	Variables   map[string]interface{} `json:"variables"`
-	Lists       map[string]interface{} `json:"lists"`
-	Broadcasts  map[string]string      `json:"broadcasts"`
-	Blocks      map[string]interface{} `json:"blocks"`
-	Costumes    []CostumeJSON          `json:"costumes"`
-	Sounds      []SoundJSON            `json:"sounds"`
-	LayerOrder  int                    `json:"layerOrder"`
-	Volume      float64                `json:"volume"`
-	X           float64                `json:"x"`
-	Y           float64                `json:"y"`
-	Direction   float64                `json:"direction"`
-	Visible     bool                   `json:"visible"`
-	RotationVal interface{}            `json:"rotationStyle"`
+	IsStage        bool                   `json:"isStage"`
+	Name           string                 `json:"name"`
+	Variables      map[string]interface{} `json:"variables"`
+	Lists          map[string]interface{} `json:"lists"`
+	Broadcasts     map[string]string      `json:"broadcasts"`
+	Blocks         map[string]interface{} `json:"blocks"`
+	Costumes       []CostumeJSON          `json:"costumes"`
+	Sounds         []SoundJSON            `json:"sounds"`
+	CurrentCostume int                    `json:"currentCostume"`
+	LayerOrder     int                    `json:"layerOrder"`
+	Volume         *float64               `json:"volume"`
+	X              float64                `json:"x"`
+	Y              float64                `json:"y"`
+	Size           *float64               `json:"size"`
+	Direction      float64                `json:"direction"`
+	Visible        bool                   `json:"visible"`
+	RotationStyle  string                 `json:"rotationStyle"`
 }
 
 // CostumeJSON represents costume data
 type CostumeJSON struct {
-	Name            string  `json:"name"`
-	AssetID         string  `json:"assetId"`
-	DataFormat      string  `json:"dataFormat"`
-	Md5Ext          string  `json:"md5ext"`
-	RotationCenterX float64 `json:"bitmapResolution"` // fallback
-	CenterX         float64 `json:"rotationCenterX"`
-	CenterY         float64 `json:"rotationCenterY"`
+	Name             string  `json:"name"`
+	AssetID          string  `json:"assetId"`
+	DataFormat       string  `json:"dataFormat"`
+	Md5Ext           string  `json:"md5ext"`
+	BitmapResolution float64 `json:"bitmapResolution"`
+	CenterX          float64 `json:"rotationCenterX"`
+	CenterY          float64 `json:"rotationCenterY"`
 }
 
 // SoundJSON represents sound data
