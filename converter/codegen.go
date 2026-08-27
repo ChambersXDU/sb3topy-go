@@ -51,6 +51,7 @@ func transpileTarget(target *TargetJSON, sm *SpecMap) (string, error) {
 
 	// @sprite('...')
 	// class ClassName(Target):
+	sb.WriteString(fmt.Sprintf("# sb3topy:target %s\n", QuoteString(target.Name)))
 	sb.WriteString(fmt.Sprintf("@sprite(%s)\n", QuoteField(target.Name)))
 	sb.WriteString(fmt.Sprintf("class %s(Target):\n", cleanClassName))
 	sb.WriteString(fmt.Sprintf("    \"\"\"Sprite %s\"\"\"\n\n", target.Name))
@@ -216,6 +217,7 @@ func transpileTargetBlocks(target *TargetJSON, sm *SpecMap) string {
 	for _, hatID := range hatIDs {
 		hatBlock := blocksMap[hatID]
 		opcode := hatBlock.Opcode
+		sb.WriteString(fmt.Sprintf("    # sb3topy:hat %s %s\n", hatID, opcode))
 
 		methodName := "green_flag"
 		decorator := "@on_green_flag"
@@ -310,6 +312,7 @@ func transpileBlockStack(startBlockID interface{}, blocksMap map[string]*RawBloc
 			break
 		}
 
+		sb.WriteString(fmt.Sprintf("%s# sb3topy:block %s %s\n", indent, idStr, block.Opcode))
 		line := transpileSingleBlock(block, blocksMap, sm, indent)
 		if line != "" {
 			sb.WriteString(line)
