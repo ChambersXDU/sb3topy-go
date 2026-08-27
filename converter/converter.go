@@ -118,7 +118,12 @@ func Run(opts ConvertOptions) error {
 		return fmt.Errorf("写入 project.py 失败: %w", err)
 	}
 
+	if err := writeRoundTripMetadata(absOutDir, projectJsonData, []byte(pyCode), sb3Path); err != nil {
+		return fmt.Errorf("写入可逆转换元数据失败: %w", err)
+	}
+
 	fmt.Printf("\n✅ 原生 Go 转换成功！项目已保存至目录: %s\n", absOutDir)
+	fmt.Printf("🔁 可逆元数据已保存至 %s/\n", roundTripDirName)
 	fmt.Printf("🚀 运行项目: cd \"%s\" && python3 project.py\n", outputDir)
 	return nil
 }
