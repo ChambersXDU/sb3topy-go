@@ -67,7 +67,7 @@ def on_greater(source, value=None):
             # Run func when the timer is greater
             while True:
                 if value is None or util.timer() > value:
-                    func(self, util)
+                    await func(self, util)
                 await self.yield_()
 
         # Return the timer wrapper
