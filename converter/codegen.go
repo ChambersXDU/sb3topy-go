@@ -58,7 +58,7 @@ func transpileTarget(target *TargetJSON, sm *SpecMap) (string, error) {
 	sb.WriteString(fmt.Sprintf("# sb3topy:target %s\n", QuoteString(target.Name)))
 	sb.WriteString(fmt.Sprintf("@sprite(%s)\n", QuoteField(target.Name)))
 	sb.WriteString(fmt.Sprintf("class %s(Target):\n", cleanClassName))
-	sb.WriteString(fmt.Sprintf("    \"\"\"Sprite %s\"\"\"\n\n", target.Name))
+	sb.WriteString(fmt.Sprintf("    %s\n\n", QuoteString("Sprite "+target.Name)))
 
 	// __init__ method
 	sb.WriteString("    def __init__(self, parent=None):\n")
@@ -202,15 +202,44 @@ func transpileTarget(target *TargetJSON, sm *SpecMap) (string, error) {
 }
 
 type markerState struct {
-	emitted map[string]bool
-	pending map[string]bool
+	emitted          map[string]bool
+	pending          map[string]bool
+	targetIsStage    bool
+	localVariableIDs map[string]bool
+	localListIDs     map[string]bool
 }
 
-func newMarkerState() *markerState {
-	return &markerState{
-		emitted: make(map[string]bool),
-		pending: make(map[string]bool),
+func newMarkerState(target *TargetJSON) *markerState {
+	state := &markerState{
+		emitted:          make(map[string]bool),
+		pending:          make(map[string]bool),
+		targetIsStage:    target.IsStage,
+		localVariableIDs: make(map[string]bool, len(target.Variables)),
+		localListIDs:     make(map[string]bool, len(target.Lists)),
 	}
+	for id := range target.Variables {
+		state.localVariableIDs[id] = true
+	}
+	for id := range target.Lists {
+		state.localListIDs[id] = true
+	}
+	return state
+}
+
+func (s *markerState) dataReference(prefix, name, id string) string {
+	clean := CleanIdentifier(name, prefix)
+	local := s.targetIsStage
+	if !local && id != "" {
+		if prefix == "var" {
+			local = s.localVariableIDs[id]
+		} else {
+			local = s.localListIDs[id]
+		}
+	}
+	if local {
+		return "self." + prefix + "_" + clean
+	}
+	return "util.sprites.stage." + prefix + "_" + clean
 }
 
 func (s *markerState) queue(blockID string) {
@@ -277,7 +306,7 @@ func transpileTargetBlocks(target *TargetJSON, sm *SpecMap) string {
 
 	var sb strings.Builder
 	hatIndex := map[string]int{}
-	markers := newMarkerState()
+	markers := newMarkerState(target)
 
 	for _, hatID := range hatIDs {
 		hatBlock := blocksMap[hatID]
@@ -300,6 +329,18 @@ func transpileTargetBlocks(target *TargetJSON, sm *SpecMap) string {
 			bcastVal := getOptionField(hatBlock, "BROADCAST_OPTION", "message1")
 			methodName = fmt.Sprintf("broadcast_%s", CleanIdentifier(bcastVal, "broadcast"))
 			decorator = fmt.Sprintf("@on_broadcast(%s)", QuoteField(bcastVal))
+		case "event_whenthisspriteclicked", "event_whenstageclicked":
+			methodName = "sprite_clicked"
+			decorator = "@on_clicked"
+		case "event_whenbackdropswitchesto":
+			backdrop := getFieldVal(hatBlock, "BACKDROP", "")
+			methodName = "on_backdrop_" + CleanIdentifier(backdrop, "backdrop")
+			decorator = fmt.Sprintf("@on_backdrop(%s)", QuoteField(backdrop))
+		case "event_whengreaterthan":
+			source := strings.ToLower(getFieldVal(hatBlock, "WHENGREATERTHANMENU", "timer"))
+			value := transpileInput(hatBlock, "VALUE", blocksMap, sm, "10", markers)
+			methodName = "on_" + CleanIdentifier(source, "greater")
+			decorator = fmt.Sprintf("@on_greater(%s, %s)", QuoteField(source), value)
 		case "control_start_as_clone":
 			methodName = "clone_start"
 			decorator = "@on_clone_start"
@@ -512,50 +553,39 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return fmt.Sprintf("%sawait self.sleep(%s)", indent, duration)
 
 	case "data_setvariableto":
-		varName := getFieldVal(block, "VARIABLE", "variable")
-		cleanVar := CleanIdentifier(varName, "var")
+		ref := dataReferenceFromField(block, "VARIABLE", "var", "variable", markers)
 		val := transpileInput(block, "VALUE", blocksMap, sm, "0", markers)
-		return fmt.Sprintf("%sutil.sprites.stage.var_%s = %s", indent, cleanVar, val)
+		return fmt.Sprintf("%s%s = %s", indent, ref, val)
 
 	case "data_changevariableby":
-		varName := getFieldVal(block, "VARIABLE", "variable")
-		cleanVar := CleanIdentifier(varName, "var")
+		ref := dataReferenceFromField(block, "VARIABLE", "var", "variable", markers)
 		val := transpileInput(block, "VALUE", blocksMap, sm, "1", markers)
-		return fmt.Sprintf("%sutil.sprites.stage.var_%s += %s", indent, cleanVar, val)
+		return fmt.Sprintf("%s%s = tonum(%s) + tonum(%s)", indent, ref, ref, val)
 
 	case "data_variable":
-		varName := getFieldVal(block, "VARIABLE", "variable")
-		cleanVar := CleanIdentifier(varName, "var")
-		return fmt.Sprintf("util.sprites.stage.var_%s", cleanVar)
+		return dataReferenceFromField(block, "VARIABLE", "var", "variable", markers)
 
 	case "data_deletealloflist":
-		listName := getFieldVal(block, "LIST", "list")
-		cleanList := CleanIdentifier(listName, "list")
-		return fmt.Sprintf("%sutil.sprites.stage.list_%s.delete_all()", indent, cleanList)
+		ref := dataReferenceFromField(block, "LIST", "list", "list", markers)
+		return fmt.Sprintf("%s%s.delete_all()", indent, ref)
 
 	case "data_addtolist":
-		listName := getFieldVal(block, "LIST", "list")
-		cleanList := CleanIdentifier(listName, "list")
+		ref := dataReferenceFromField(block, "LIST", "list", "list", markers)
 		itemVal := transpileInput(block, "ITEM", blocksMap, sm, "\"\"", markers)
-		return fmt.Sprintf("%sutil.sprites.stage.list_%s.append(%s)", indent, cleanList, itemVal)
+		return fmt.Sprintf("%s%s.append(%s)", indent, ref, itemVal)
 
 	case "data_itemoflist":
-		listName := getFieldVal(block, "LIST", "list")
-		cleanList := CleanIdentifier(listName, "list")
+		ref := dataReferenceFromField(block, "LIST", "list", "list", markers)
 		idxVal := transpileInput(block, "INDEX", blocksMap, sm, "1", markers)
-		return fmt.Sprintf("util.sprites.stage.list_%s[toint(%s)]", cleanList, idxVal)
+		return fmt.Sprintf("%s[toint(%s)]", ref, idxVal)
 
 	case "data_listcontents":
-		listName := getFieldVal(block, "LIST", "list")
-		cleanList := CleanIdentifier(listName, "list")
-		return fmt.Sprintf("util.sprites.stage.list_%s", cleanList)
+		ref := dataReferenceFromField(block, "LIST", "list", "list", markers)
+		return ref + ".join()"
 
 	case "control_create_clone_of":
-		opt := getOptionField(block, "CLONE_OPTION", "_myself_")
-		if opt == "_myself_" {
-			return fmt.Sprintf("%sself.create_clone_of(util, \"_myself_\")", indent)
-		}
-		return fmt.Sprintf("%sself.create_clone_of(util, %s)", indent, QuoteString(opt))
+		opt := transpileInput(block, "CLONE_OPTION", blocksMap, sm, QuoteString("_myself_"), markers)
+		return fmt.Sprintf("%sself.create_clone_of(util, %s)", indent, opt)
 
 	case "control_delete_this_clone":
 		return fmt.Sprintf("%sself.delete_clone(util)", indent)
@@ -596,8 +626,7 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 
 	case "sensing_keypressed":
 		keyOpt := transpileInput(block, "KEY_OPTION", blocksMap, sm, "\"space\"", markers)
-		keyOpt = strings.Trim(keyOpt, "\"")
-		return fmt.Sprintf("util.inputs[%s]", QuoteString(keyOpt))
+		return fmt.Sprintf("util.inputs[%s]", keyOpt)
 
 	case "argument_reporter_string_number", "argument_reporter_boolean":
 		valName := getFieldVal(block, "VALUE", "arg")
@@ -679,11 +708,22 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 	// Generic SpecMap lookup fallback
 	if spec, ok := sm.Get(opcode); ok {
 		args := make(map[string]string)
-		for argName := range spec.Args {
+		for argName, argType := range spec.Args {
 			if inputVal, ok := block.Inputs[argName]; ok {
 				args[argName] = parseInputValue(inputVal, blocksMap, sm, markers)
 			} else if fieldVal, ok := block.Fields[argName]; ok {
-				args[argName] = parseFieldValue(fieldVal)
+				switch argType {
+				case "variable":
+					args[argName] = dataReferenceFromFieldValue(fieldVal, "var", "variable", markers)
+				case "list":
+					args[argName] = dataReferenceFromFieldValue(fieldVal, "list", "list", markers)
+				case "field":
+					args[argName] = QuoteField(strings.ToLower(parseFieldValue(fieldVal)))
+				case "str":
+					args[argName] = QuoteString(parseFieldValue(fieldVal))
+				default:
+					args[argName] = parseFieldValue(fieldVal)
+				}
 			}
 		}
 		code := sm.FormatCode(opcode, args)
@@ -725,6 +765,34 @@ func getFieldVal(block *RawBlockData, key, defaultVal string) string {
 		return fmt.Sprint(slice[0])
 	}
 	return defaultVal
+}
+
+func fieldID(fieldVal interface{}) string {
+	slice, ok := fieldVal.([]interface{})
+	if !ok || len(slice) < 2 {
+		return ""
+	}
+	id, _ := slice[1].(string)
+	return id
+}
+
+func dataReferenceFromField(block *RawBlockData, key, prefix, defaultName string, markers *markerState) string {
+	if block.Fields == nil {
+		return markers.dataReference(prefix, defaultName, "")
+	}
+	fieldVal, ok := block.Fields[key]
+	if !ok {
+		return markers.dataReference(prefix, defaultName, "")
+	}
+	return dataReferenceFromFieldValue(fieldVal, prefix, defaultName, markers)
+}
+
+func dataReferenceFromFieldValue(fieldVal interface{}, prefix, defaultName string, markers *markerState) string {
+	name := parseFieldValue(fieldVal)
+	if name == "" {
+		name = defaultName
+	}
+	return markers.dataReference(prefix, name, fieldID(fieldVal))
 }
 
 func getOptionField(block *RawBlockData, key, defaultVal string) string {
@@ -782,16 +850,31 @@ func parseInputValue(inputVal interface{}, blocksMap map[string]*RawBlockData, s
 
 	if typeCode == 12 && len(slice) >= 2 {
 		varName := fmt.Sprint(slice[1])
-		return "util.sprites.stage.var_" + CleanIdentifier(varName, "var")
+		varID := ""
+		if len(slice) >= 3 {
+			varID, _ = slice[2].(string)
+		}
+		return markers.dataReference("var", varName, varID)
 	}
 
 	if typeCode == 13 && len(slice) >= 2 {
 		listName := fmt.Sprint(slice[1])
-		return "util.sprites.stage.list_" + CleanIdentifier(listName, "list")
+		listID := ""
+		if len(slice) >= 3 {
+			listID, _ = slice[2].(string)
+		}
+		return markers.dataReference("list", listName, listID)
 	}
 
 	if len(slice) >= 2 {
-		return formatPyValue(slice[1])
+		switch typeCode {
+		case 4, 5, 6, 7, 8:
+			return formatPyNumberLiteral(slice[1])
+		case 9, 10, 11:
+			return QuoteString(fmt.Sprint(slice[1]))
+		default:
+			return formatPyValue(slice[1])
+		}
 	}
 	return ""
 }
@@ -804,15 +887,29 @@ func parseFieldValue(fieldVal interface{}) string {
 	return fmt.Sprint(slice[0])
 }
 
+func formatPyNumberLiteral(val interface{}) string {
+	switch v := val.(type) {
+	case string:
+		num, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return "0"
+		}
+		return fmt.Sprint(num)
+	case float64:
+		return fmt.Sprint(v)
+	case int:
+		return fmt.Sprint(v)
+	default:
+		return "0"
+	}
+}
+
 func formatPyValue(val interface{}) string {
 	if val == nil {
 		return "None"
 	}
 	switch v := val.(type) {
 	case string:
-		if num, err := strconv.ParseFloat(v, 64); err == nil {
-			return fmt.Sprint(num)
-		}
 		return QuoteString(v)
 	case bool:
 		if v {
