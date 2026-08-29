@@ -2,6 +2,8 @@ package converter
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -243,5 +245,79 @@ func TestTranspileMapsCommonHatsMenusAndFields(t *testing.T) {
 	}
 	if strings.Contains(py, `self.create_clone_of(util, "clone-menu")`) {
 		t.Fatalf("clone menu block ID leaked into generated code:\n%s", py)
+	}
+}
+
+func TestTranspileResolvesSpecSwitchesAndProducesValidPython(t *testing.T) {
+	specData, err := os.ReadFile("../specmap_data.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := LoadSpecMap(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	projectJSON := []byte(`{
+		"targets": [{
+			"isStage": true,
+			"name": "Stage",
+			"variables": {"v": ["value", 0]},
+			"lists": {},
+			"broadcasts": {},
+			"blocks": {
+				"hat": {"opcode":"event_whenflagclicked","next":"front","parent":null,"inputs":{},"fields":{},"shadow":false,"topLevel":true},
+				"front": {"opcode":"looks_gotofrontback","next":"layers","parent":"hat","inputs":{},"fields":{"FRONT_BACK":["front",null]},"shadow":false,"topLevel":false},
+				"layers": {"opcode":"looks_goforwardbackwardlayers","next":"set-x","parent":"front","inputs":{"NUM":[1,[4,"2"]]},"fields":{"FORWARD_BACKWARD":["backward",null]},"shadow":false,"topLevel":false},
+				"set-x": {"opcode":"motion_setx","next":"set-y","parent":"layers","inputs":{"X":[1,"x-of"]},"fields":{},"shadow":false,"topLevel":false},
+				"x-of": {"opcode":"sensing_of","next":null,"parent":"set-x","inputs":{"OBJECT":[1,"object-menu"]},"fields":{"PROPERTY":["x position",null]},"shadow":false,"topLevel":false},
+				"object-menu": {"opcode":"sensing_of_object_menu","next":null,"parent":"x-of","inputs":{},"fields":{"OBJECT":["Sprite",null]},"shadow":true,"topLevel":false},
+				"set-y": {"opcode":"motion_sety","next":"direction","parent":"set-x","inputs":{"Y":[1,"sqrt"]},"fields":{},"shadow":false,"topLevel":false},
+				"sqrt": {"opcode":"operator_mathop","next":null,"parent":"set-y","inputs":{"NUM":[1,[4,"9"]]},"fields":{"OPERATOR":["sqrt",null]},"shadow":false,"topLevel":false},
+				"direction": {"opcode":"motion_pointindirection","next":"set-value","parent":"set-y","inputs":{"DIRECTION":[1,"current"]},"fields":{},"shadow":false,"topLevel":false},
+				"current": {"opcode":"sensing_current","next":null,"parent":"direction","inputs":{},"fields":{"CURRENTMENU":["year",null]},"shadow":false,"topLevel":false},
+				"set-value": {"opcode":"data_setvariableto","next":"bad-input","parent":"direction","inputs":{"VALUE":[1,"costume-number"]},"fields":{"VARIABLE":["value","v"]},"shadow":false,"topLevel":false},
+				"costume-number": {"opcode":"looks_costumenumbername","next":null,"parent":"set-value","inputs":{},"fields":{"NUMBER_NAME":["number",null]},"shadow":false,"topLevel":false},
+				"bad-input": {"opcode":"motion_setx","next":"unknown","parent":"set-value","inputs":{"X":[1,"bad-reporter"]},"fields":{},"shadow":false,"topLevel":false},
+				"bad-reporter": {"opcode":"extension_reporter_not_supported","next":null,"parent":"bad-input","inputs":{},"fields":{},"shadow":false,"topLevel":false},
+				"unknown": {"opcode":"extension_not_supported","next":"stop","parent":"bad-input","inputs":{},"fields":{},"shadow":false,"topLevel":false},
+				"stop": {"opcode":"control_stop","next":null,"parent":"unknown","inputs":{},"fields":{"STOP_OPTION":["all",null]},"shadow":false,"topLevel":false}
+			},
+			"costumes": [],
+			"sounds": [],
+			"layerOrder": 0,
+			"volume": 100,
+			"visible": true
+		}]
+	}`)
+
+	py, err := TranspileProject(projectJSON, sm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, py, "self.front_layer(util)")
+	assertContains(t, py, "self.change_layer(util, -2)")
+	assertContains(t, py, `self.xpos = util.sprites.get_target("Sprite").xpos`)
+	assertContains(t, py, "self.ypos = sqrt(9)")
+	assertContains(t, py, "self.direction = time.localtime().tm_year")
+	assertContains(t, py, "self.var_value = self.costume.number")
+	assertContains(t, py, `pass  # sb3topy:unsupported-input opcode="motion_setx"`)
+	assertContains(t, py, `pass  # sb3topy:unsupported opcode="extension_not_supported"`)
+	assertContains(t, py, "util.stop_all()\n        return None")
+	assertPythonCompiles(t, py)
+}
+
+func assertPythonCompiles(t *testing.T, source string) {
+	t.Helper()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not available")
+	}
+	path := filepath.Join(t.TempDir(), "project.py")
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(python, "-m", "py_compile", path).CombinedOutput(); err != nil {
+		t.Fatalf("generated Python is invalid: %v\n%s\n%s", err, output, source)
 	}
 }

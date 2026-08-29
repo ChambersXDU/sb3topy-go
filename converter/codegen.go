@@ -628,6 +628,30 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		keyOpt := transpileInput(block, "KEY_OPTION", blocksMap, sm, "\"space\"", markers)
 		return fmt.Sprintf("util.inputs[%s]", keyOpt)
 
+	case "sensing_of":
+		object := transpileInput(block, "OBJECT", blocksMap, sm, QuoteString("Stage"), markers)
+		target := fmt.Sprintf("util.sprites.get_target(%s)", object)
+		property := strings.ToLower(strings.TrimSpace(getFieldVal(block, "PROPERTY", "")))
+		switch property {
+		case "x position":
+			return target + ".xpos"
+		case "y position":
+			return target + ".ypos"
+		case "direction":
+			return target + ".direction"
+		case "costume #", "backdrop #":
+			return target + ".costume.number"
+		case "costume name", "backdrop name":
+			return target + ".costume.name"
+		case "size":
+			return "round(" + target + ".costume.size)"
+		case "volume":
+			return target + ".sounds.volume"
+		default:
+			attribute := "var_" + CleanIdentifier(property, "variable")
+			return fmt.Sprintf("getattr(%s, %s, 0)", target, QuoteString(attribute))
+		}
+
 	case "argument_reporter_string_number", "argument_reporter_boolean":
 		valName := getFieldVal(block, "VALUE", "arg")
 		return CleanIdentifier(valName, "arg")
@@ -706,11 +730,18 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 	}
 
 	// Generic SpecMap lookup fallback
-	if spec, ok := sm.Get(opcode); ok {
+	resolvedOpcode, spec, ok := resolveBlockSpec(sm, opcode, block)
+	if ok {
 		args := make(map[string]string)
+		missingArg := false
 		for argName, argType := range spec.Args {
 			if inputVal, ok := block.Inputs[argName]; ok {
-				args[argName] = parseInputValue(inputVal, blocksMap, sm, markers)
+				value := parseInputValue(inputVal, blocksMap, sm, markers)
+				if strings.TrimSpace(value) == "" {
+					missingArg = true
+				} else {
+					args[argName] = value
+				}
 			} else if fieldVal, ok := block.Fields[argName]; ok {
 				switch argType {
 				case "variable":
@@ -724,9 +755,15 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 				default:
 					args[argName] = parseFieldValue(fieldVal)
 				}
+			} else {
+				missingArg = true
 			}
 		}
-		code := sm.FormatCode(opcode, args)
+		code := ""
+		if missingArg {
+			return fmt.Sprintf("%spass  # sb3topy:unsupported-input opcode=%s", indent, QuoteString(opcode))
+		}
+		code = sm.FormatCode(resolvedOpcode, args)
 		if code != "" {
 			lines := strings.Split(code, "\n")
 			for i, l := range lines {
@@ -736,7 +773,48 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		}
 	}
 
-	return fmt.Sprintf("%spass", indent)
+	return fmt.Sprintf("%spass  # sb3topy:unsupported opcode=%s", indent, QuoteString(opcode))
+}
+
+func resolveBlockSpec(sm *SpecMap, opcode string, block *RawBlockData) (string, *BlockSpec, bool) {
+	spec, ok := sm.Get(opcode)
+	if !ok {
+		return opcode, nil, false
+	}
+	if spec.Switch == "" {
+		return opcode, spec, true
+	}
+
+	resolved := spec.Switch
+	for {
+		start := strings.IndexByte(resolved, '{')
+		if start < 0 {
+			break
+		}
+		endOffset := strings.IndexByte(resolved[start+1:], '}')
+		if endOffset < 0 {
+			return opcode, nil, false
+		}
+		end := start + 1 + endOffset
+		fieldName := resolved[start+1 : end]
+		fieldValue := getFieldVal(block, fieldName, "")
+		if fieldValue == "" {
+			return opcode, nil, false
+		}
+		fieldValue = normalizeSwitchValue(fieldValue)
+		resolved = resolved[:start] + fieldValue + resolved[end+1:]
+	}
+
+	resolvedSpec, ok := sm.Get(resolved)
+	if !ok {
+		return opcode, nil, false
+	}
+	return resolved, resolvedSpec, true
+}
+
+func normalizeSwitchValue(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.Join(strings.Fields(value), "_")
 }
 
 func getSubstack(block *RawBlockData, key string) interface{} {
@@ -836,7 +914,7 @@ func parseInputValue(inputVal interface{}, blocksMap map[string]*RawBlockData, s
 				if subBlock, ok := blocksMap[blockID]; ok {
 					markers.queue(blockID)
 					expr := transpileSingleBlock(subBlock, blocksMap, sm, "", markers)
-					if expr == "pass" || strings.HasPrefix(expr, "#") || strings.Contains(expr, "\n") {
+					if strings.HasPrefix(expr, "pass") || strings.HasPrefix(expr, "#") || strings.Contains(expr, "\n") {
 						return ""
 					}
 					return expr

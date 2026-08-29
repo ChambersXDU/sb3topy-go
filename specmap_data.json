@@ -256,7 +256,7 @@
     "looks_goforwardbackwardlayers": {
         "type": "stack",
         "args": {
-            "FOWARDS_BACKWARDS": "field"
+            "FORWARD_BACKWARD": "field"
         },
         "switch": "looks_go_{FORWARD_BACKWARD}_layers"
     },
@@ -277,7 +277,7 @@
     "looks_costumenumbername": {
         "type": "any",
         "args": {
-            "NUMER_NAME": "field"
+            "NUMBER_NAME": "field"
         },
         "switch": "looks_costume_{NUMBER_NAME}"
     },
@@ -938,37 +938,37 @@
     "sensing_current_year": {
         "type": "int",
         "args": {},
-        "code": "time.localtime()['tm_year']"
+        "code": "time.localtime().tm_year"
     },
     "sensing_current_month": {
         "type": "int",
         "args": {},
-        "code": "time.localtime()['tm_month']"
+        "code": "time.localtime().tm_mon"
     },
     "sensing_current_date": {
         "type": "int",
         "args": {},
-        "code": "time.localtime()['tm_mday']"
+        "code": "time.localtime().tm_mday"
     },
     "sensing_current_day_of_week": {
         "type": "int",
         "args": {},
-        "code": "(time.localtime()['tm_wday'] + 2)"
+        "code": "((time.localtime().tm_wday + 1) % 7 + 1)"
     },
     "sensing_current_hour": {
         "type": "int",
         "args": {},
-        "code": "time.localtime()['tm_hour']"
+        "code": "time.localtime().tm_hour"
     },
     "sensing_current_minute": {
         "type": "int",
         "args": {},
-        "code": "time.localtime()['tm_min']"
+        "code": "time.localtime().tm_min"
     },
     "sensing_current_second": {
         "type": "int",
         "args": {},
-        "code": "time.localtime()['tm_sec']"
+        "code": "time.localtime().tm_sec"
     },
     "sensing_dayssince2000": {
         "type": "float",
@@ -978,7 +978,7 @@
     "sensing_username": {
         "type": "str",
         "args": {},
-        "code": "config.USERNAME"
+        "code": "engine.config.USERNAME"
     },
     "operator_add": {
         "type": "float",
