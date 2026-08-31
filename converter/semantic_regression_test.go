@@ -298,13 +298,59 @@ func TestTranspileResolvesSpecSwitchesAndProducesValidPython(t *testing.T) {
 	assertContains(t, py, "self.front_layer(util)")
 	assertContains(t, py, "self.change_layer(util, -2)")
 	assertContains(t, py, `self.xpos = util.sprites.get_target("Sprite").xpos`)
-	assertContains(t, py, "self.ypos = sqrt(9)")
+	assertContains(t, py, "self.ypos = sqrt(tonum(9))")
 	assertContains(t, py, "self.direction = time.localtime().tm_year")
 	assertContains(t, py, "self.var_value = self.costume.number")
 	assertContains(t, py, `pass  # sb3topy:unsupported-input opcode="motion_setx"`)
 	assertContains(t, py, `pass  # sb3topy:unsupported opcode="extension_not_supported"`)
 	assertContains(t, py, "util.stop_all()\n        return None")
 	assertPythonCompiles(t, py)
+}
+
+func TestTranspileCoercesCommonScratchOperatorInputs(t *testing.T) {
+	specData, err := os.ReadFile("../specmap_data.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := LoadSpecMap(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markers := newMarkerState(&TargetJSON{
+		IsStage:   true,
+		Variables: map[string]interface{}{"v": []interface{}{"value", "2"}},
+	})
+	variable := []interface{}{3, []interface{}{12, "value", "v"}, []interface{}{4, ""}}
+	number := func(value string) []interface{} {
+		return []interface{}{1, []interface{}{4, value}}
+	}
+	text := func(value string) []interface{} {
+		return []interface{}{1, []interface{}{10, value}}
+	}
+
+	tests := []struct {
+		name  string
+		block *RawBlockData
+		want  string
+	}{
+		{"multiply", &RawBlockData{Opcode: "operator_multiply", Inputs: map[string]interface{}{"NUM1": variable, "NUM2": number("3")}}, `(tonum(self.var_value) * tonum(3))`},
+		{"random", &RawBlockData{Opcode: "operator_random", Inputs: map[string]interface{}{"FROM": variable, "TO": number("9")}}, `pick_rand(tonum(self.var_value), tonum(9))`},
+		{"letter", &RawBlockData{Opcode: "operator_letter_of", Inputs: map[string]interface{}{"STRING": number("123"), "LETTER": text("2")}}, `letter_of(str(123), toint("2"))`},
+		{"length", &RawBlockData{Opcode: "operator_length", Inputs: map[string]interface{}{"STRING": number("123")}}, `len(str(123))`},
+		{"contains", &RawBlockData{Opcode: "operator_contains", Inputs: map[string]interface{}{"STRING1": text("Hello"), "STRING2": text("EL")}}, `(str("EL").lower() in str("Hello").lower())`},
+		{"round", &RawBlockData{Opcode: "operator_round", Inputs: map[string]interface{}{"NUM": variable}}, `math.floor(tonum(self.var_value) + 0.5)`},
+		{"mathop", &RawBlockData{Opcode: "operator_mathop", Inputs: map[string]interface{}{"NUM": variable}, Fields: map[string]interface{}{"OPERATOR": []interface{}{"sqrt", nil}}}, `sqrt(tonum(self.var_value))`},
+		{"next backdrop", &RawBlockData{Opcode: "looks_nextbackdrop", Inputs: map[string]interface{}{}, Fields: map[string]interface{}{}}, "util.sprites.stage.costume.next()\nutil.send_event('backdrop_' + util.sprites.stage.costume.name, True)"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := transpileSingleBlock(test.block, map[string]*RawBlockData{}, sm, "", markers)
+			if got != test.want {
+				t.Fatalf("got %q, want %q", got, test.want)
+			}
+		})
+	}
 }
 
 func assertPythonCompiles(t *testing.T, source string) {

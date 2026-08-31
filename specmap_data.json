@@ -198,7 +198,7 @@
         "args": {},
         "code": [
             "util.sprites.stage.costume.next()",
-            "util.send_event('onbackdrop_' + util.sprites.stage.costume.name, True)"
+            "util.send_event('backdrop_' + util.sprites.stage.costume.name, True)"
         ]
     },
     "looks_changeeffectby": {
@@ -1127,98 +1127,98 @@
         "args": {
             "NUM": "float"
         },
-        "code": "abs({NUM})"
+        "code": "abs(tonum({NUM}))"
     },
     "operator_mathop_floor": {
         "type": "int",
         "args": {
             "NUM": "float"
         },
-        "code": "math.floor({NUM})"
+        "code": "math.floor(tonum({NUM}))"
     },
     "operator_mathop_ceiling": {
         "type": "int",
         "args": {
             "NUM": "float"
         },
-        "code": "math.ceil({NUM})"
+        "code": "math.ceil(tonum({NUM}))"
     },
     "operator_mathop_sqrt": {
         "type": "int",
         "args": {
             "NUM": "float"
         },
-        "code": "sqrt({NUM})"
+        "code": "sqrt(tonum({NUM}))"
     },
     "operator_mathop_sin": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.sin(math.radians({NUM}))"
+        "code": "math.sin(math.radians(tonum({NUM})))"
     },
     "operator_mathop_cos": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.cos(math.radians({NUM}))"
+        "code": "math.cos(math.radians(tonum({NUM})))"
     },
     "operator_mathop_tan": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.tan(math.radians({NUM}))"
+        "code": "math.tan(math.radians(tonum({NUM})))"
     },
     "operator_mathop_asin": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.degrees(math.asin({NUM}))"
+        "code": "math.degrees(math.asin(tonum({NUM})))"
     },
     "operator_mathop_acos": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.degrees(math.acos({NUM}))"
+        "code": "math.degrees(math.acos(tonum({NUM})))"
     },
     "operator_mathop_atan": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.degrees(math.atan({NUM}))"
+        "code": "math.degrees(math.atan(tonum({NUM})))"
     },
     "operator_mathop_ln": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.log({NUM})"
+        "code": "math.log(tonum({NUM}))"
     },
     "operator_mathop_log": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.log({NUM}, 10)"
+        "code": "math.log(tonum({NUM}), 10)"
     },
     "operator_mathop_e_^": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.exp({NUM})"
+        "code": "math.exp(tonum({NUM}))"
     },
     "operator_mathop_10_^": {
         "type": "float",
         "args": {
             "NUM": "float"
         },
-        "code": "math.pow(10, {NUM})"
+        "code": "math.pow(10, tonum({NUM}))"
     },
     "data_variable": {
         "type": "any",

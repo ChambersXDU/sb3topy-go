@@ -694,6 +694,16 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		v2 := transpileInput(block, "NUM2", blocksMap, sm, "0", markers)
 		return fmt.Sprintf("(tonum(%s) - tonum(%s))", v1, v2)
 
+	case "operator_multiply":
+		v1 := transpileInput(block, "NUM1", blocksMap, sm, "0", markers)
+		v2 := transpileInput(block, "NUM2", blocksMap, sm, "0", markers)
+		return fmt.Sprintf("(tonum(%s) * tonum(%s))", v1, v2)
+
+	case "operator_random":
+		from := transpileInput(block, "FROM", blocksMap, sm, "1", markers)
+		to := transpileInput(block, "TO", blocksMap, sm, "10", markers)
+		return fmt.Sprintf("pick_rand(tonum(%s), tonum(%s))", from, to)
+
 	case "operator_equals":
 		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "\"\"", markers)
 		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "\"\"", markers)
@@ -727,6 +737,24 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		v1 := transpileInput(block, "STRING1", blocksMap, sm, "\"\"", markers)
 		v2 := transpileInput(block, "STRING2", blocksMap, sm, "\"\"", markers)
 		return fmt.Sprintf("(str(%s) + str(%s))", v1, v2)
+
+	case "operator_letter_of":
+		text := transpileInput(block, "STRING", blocksMap, sm, "\"\"", markers)
+		index := transpileInput(block, "LETTER", blocksMap, sm, "1", markers)
+		return fmt.Sprintf("letter_of(str(%s), toint(%s))", text, index)
+
+	case "operator_length":
+		text := transpileInput(block, "STRING", blocksMap, sm, "\"\"", markers)
+		return fmt.Sprintf("len(str(%s))", text)
+
+	case "operator_contains":
+		text := transpileInput(block, "STRING1", blocksMap, sm, "\"\"", markers)
+		substring := transpileInput(block, "STRING2", blocksMap, sm, "\"\"", markers)
+		return fmt.Sprintf("(str(%s).lower() in str(%s).lower())", substring, text)
+
+	case "operator_round":
+		value := transpileInput(block, "NUM", blocksMap, sm, "0", markers)
+		return fmt.Sprintf("math.floor(tonum(%s) + 0.5)", value)
 	}
 
 	// Generic SpecMap lookup fallback
