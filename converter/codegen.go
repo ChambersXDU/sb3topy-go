@@ -577,7 +577,7 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 	case "data_itemoflist":
 		ref := dataReferenceFromField(block, "LIST", "list", "list", markers)
 		idxVal := transpileInput(block, "INDEX", blocksMap, sm, "1", markers)
-		return fmt.Sprintf("%s[toint(%s)]", ref, idxVal)
+		return fmt.Sprintf("%s[%s]", ref, idxVal)
 
 	case "data_listcontents":
 		ref := dataReferenceFromField(block, "LIST", "list", "list", markers)

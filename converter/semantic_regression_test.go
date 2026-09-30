@@ -353,6 +353,75 @@ func TestTranspileCoercesCommonScratchOperatorInputs(t *testing.T) {
 	}
 }
 
+func TestTranspiledListBlocksExecute(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not available")
+	}
+	specData, err := os.ReadFile("../specmap_data.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := LoadSpecMap(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markers := newMarkerState(&TargetJSON{
+		Lists:     map[string]interface{}{"local": []interface{}{"items", []interface{}{"a", "b"}}},
+		Variables: map[string]interface{}{"index": []interface{}{"index", "last"}},
+	})
+	text := func(value string) []interface{} {
+		return []interface{}{1, []interface{}{10, value}}
+	}
+	variableIndex := []interface{}{3, []interface{}{12, "index", "index"}, []interface{}{7, "1"}}
+	steps := []struct {
+		opcode string
+		inputs map[string]interface{}
+		listID string
+		check  string
+	}{
+		{"data_itemoflist", map[string]interface{}{"INDEX": variableIndex}, "local", `assert result == "b"`},
+		{"data_replaceitemoflist", map[string]interface{}{"INDEX": text("last"), "ITEM": text("B")}, "local", `assert self.list_items.list == ["a", "B"]`},
+		{"data_insertatlist", map[string]interface{}{"INDEX": text("2.9"), "ITEM": text("new")}, "local", `assert self.list_items.list == ["a", "new", "B"]`},
+		{"data_itemoflist", map[string]interface{}{"INDEX": text("2.9")}, "local", `assert result == "new"`},
+		{"data_deleteoflist", map[string]interface{}{"INDEX": text("last")}, "local", `assert self.list_items.list == ["a", "new"]`},
+		{"data_deleteoflist", map[string]interface{}{"INDEX": text("all")}, "local", `assert self.list_items.list == []`},
+		{"data_itemoflist", map[string]interface{}{"INDEX": text("random")}, "local", `assert result == ""`},
+		{"data_addtolist", map[string]interface{}{"ITEM": []interface{}{1, []interface{}{4, "2"}}}, "local", `assert self.list_items.list == [2]`},
+		{"data_addtolist", map[string]interface{}{"ITEM": text("A")}, "local", `assert self.list_items.list == [2, "A"]`},
+		{"data_listcontents", map[string]interface{}{}, "local", `assert result == "2 A"`},
+		{"data_itemoflist", map[string]interface{}{"INDEX": text("last")}, "global", `assert result == "stage item"`},
+		{"data_insertatlist", map[string]interface{}{"INDEX": text("last"), "ITEM": text("new")}, "global", `assert util.sprites.stage.list_items.list == ["stage item", "new"]`},
+	}
+	var script strings.Builder
+	script.WriteString(`import sys
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
+from test_lists import List
+self = SimpleNamespace(list_items=List(["a", "b"]), var_index="last")
+util = SimpleNamespace(sprites=SimpleNamespace(stage=SimpleNamespace(list_items=List(["stage item"]))))
+`)
+	for _, step := range steps {
+		block := &RawBlockData{
+			Opcode: step.opcode,
+			Inputs: step.inputs,
+			Fields: map[string]interface{}{"LIST": []interface{}{"items", step.listID}},
+		}
+		code := transpileSingleBlock(block, map[string]*RawBlockData{}, sm, "", markers)
+		if step.opcode == "data_itemoflist" || step.opcode == "data_listcontents" {
+			script.WriteString("result = ")
+		}
+		script.WriteString(code + "\n" + step.check + "\n")
+	}
+	testsDir, err := filepath.Abs("../tests")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(python, "-B", "-c", script.String(), testsDir).CombinedOutput(); err != nil {
+		t.Fatalf("transpiled list operations failed: %v\n%s\n%s", err, output, script.String())
+	}
+}
+
 func assertPythonCompiles(t *testing.T, source string) {
 	t.Helper()
 	python, err := exec.LookPath("python3")

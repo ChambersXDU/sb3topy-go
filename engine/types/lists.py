@@ -4,9 +4,10 @@ lists.py
 Handles custom list data structures
 """
 
+import math
 import random
 
-from ..operators import toint
+from ..operators import tonum
 
 __all__ = ['List', 'StaticList']
 
@@ -25,9 +26,9 @@ class List:
         self.list = values
 
     def __getitem__(self, key):
-        key -= 1
-        if 0 <= key < len(self.list):
-            return self.list[key]
+        index = list_index(key, len(self.list))
+        if index is not None:
+            return self.list[index]
         return ""
 
     def get(self, key):
@@ -35,32 +36,19 @@ class List:
         Gets an item, supporting legacy indices
         (first, last, random)
         """
-        if key == 'first':
-            return self.list[0]
-        if key == 'last':
-            return self.list[-1]
-        if key == 'random':
-            return random.choice(self.list)
-        return self.__getitem__(toint(key))
+        return self[1 if key == 'first' else key]
 
     def __setitem__(self, key, value):
-        key -= 1
-        if 0 <= key < len(self.list):
-            self.list[key] = value
+        index = list_index(key, len(self.list))
+        if index is not None:
+            self.list[index] = value
 
     def set(self, key, item):
         """
         Sets an item, supporting legacy indices
         (first, last, random)
         """
-        if key == 'first':
-            self.__setitem__(1, item)
-        elif key == 'last':
-            self.__setitem__(len(self.list), item)
-        elif key == 'random':
-            self.__setitem__(random.randint(1, len(self.list)), item)
-        else:
-            self.__setitem__(toint(key), item)
+        self[1 if key == 'first' else key] = item
 
     def append(self, value):
         """Add an item to list"""
@@ -68,45 +56,32 @@ class List:
 
     def insert(self, key, value):
         """Insert an item in list"""
-        key -= 1
-        if 0 <= key <= len(self.list):
-            self.list.insert(key, value)
+        index = list_index(key, len(self.list) + 1)
+        if index is not None:
+            self.list.insert(index, value)
 
     def insert2(self, key, item):
         """
         Inserts an item, supporting legacy indices
         (first, last random)
         """
-        if key == 'first':
-            self.insert(1, item)
-        elif key == 'last':
-            self.append(item)
-        elif key == 'random':
-            self.insert(random.randint(1, len(self.list)), item)
-        else:
-            self.insert(toint(key), item)
+        self.insert(1 if key == 'first' else key, item)
 
     def delete(self, key):
         """Remove an item from list"""
-        key -= 1
-        if 0 <= key < len(self.list):
-            del self.list[key]
+        if key == 'all':
+            self.delete_all()
+            return
+        index = list_index(key, len(self.list))
+        if index is not None:
+            del self.list[index]
 
     def delete2(self, key):
         """
         Deletes an item, supporting legacy indices
         (first, last, random, all)
         """
-        if key == 'all':
-            self.delete_all()
-        elif key == 'first':
-            self.delete(1)
-        elif key == 'last':
-            self.delete(len(self.list))
-        elif key == 'random':
-            self.delete(random.randint(1, len(self.list)))
-        else:
-            self.delete(toint(key))
+        self.delete(1 if key == 'first' else key)
 
     def delete_all(self):
         """Deletes all items in list"""
@@ -118,9 +93,9 @@ class List:
 
     def join(self):
         """Joins the list"""
-        if all(len(search_str(item)) == 1 for item in self.list):
-            return ''.join(self.list)
-        return ' '.join(self.list)
+        separator = '' if all(isinstance(item, str) and len(item) == 1 and ord(item) <= 0xffff
+                              for item in self.list) else ' '
+        return separator.join(item_text(item) for item in self.list)
 
     def __len__(self):
         return self.list.__len__()
@@ -176,6 +151,33 @@ class StaticList(List):
     def copy(self):
         """Returns self; this list is static"""
         return self
+
+
+def list_index(key, length):
+    """Resolve a Scratch index to a zero-based position, or None."""
+    if key == 'last':
+        return length - 1 if length else None
+    if key in ('random', 'any'):
+        return random.randint(1, length) - 1 if length else None
+    number = tonum(key)
+    if not math.isfinite(number):
+        return None
+    index = math.floor(number) - 1
+    return index if 0 <= index < length else None
+
+
+def item_text(value):
+    """Preserve Scratch text when reporting mixed list contents."""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, float):
+        if math.isnan(value):
+            return 'NaN'
+        if math.isinf(value):
+            return 'Infinity' if value > 0 else '-Infinity'
+        if value.is_integer():
+            return str(int(value))
+    return str(value)
 
 
 def search_str(value):
