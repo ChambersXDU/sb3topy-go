@@ -15,6 +15,8 @@ Do not edit `.sb3topy/manifest.json`. Do not assume arbitrary Python can be comp
 
 ## Workflow
 
+Before converting, use `sb3topy inspect --json game.sb3` for a read-only overview of targets, script entry points, extensions, and detected translation limitations. Use the student's reproduction steps to choose the relevant target and scripts. A translation issue is not evidence that the student's Scratch project is wrong.
+
 1. Convert the Scratch project into a reversible workspace:
 
    ```bash
@@ -48,6 +50,14 @@ Do not edit `.sb3topy/manifest.json`. Do not assume arbitrary Python can be comp
    ```
 
    Hats use `# sb3topy:hat id="..." opcode="..."`. Reporter, shadow, unsupported, and unreachable blocks also have one source association; inspect `kind=reporter`, `kind=unmapped`, and `shadow=true`. Use the quoted block ID to find the exact key under the relevant target's `blocks` object in `.sb3topy/project.json`. Do not identify blocks by opcode alone because many blocks can share an opcode.
+
+   To retrieve a block and its original fields without searching the entire JSON:
+
+   ```bash
+   sb3topy inspect --json --target "Sprite Name" --block "BLOCK_ID" work/game
+   ```
+
+   Put options before the path. Target names match exactly; target indexes distinguish duplicate names or block IDs. `blocks[].raw` preserves unknown block fields. `generatedPythonLine` refers to the current generator's source marker, not necessarily a manually edited `project.py`. `inspect` does not change files or repair a failed check; read the `graph`, `generation`, and workspace `roundTrip` results even when the command exits successfully. Continue using `verify` as the packaging gate.
 
 4. Classify the bug before editing.
 
@@ -143,6 +153,8 @@ Recovery:
 - package and test again.
 
 ## Agent reporting
+
+The human is usually a student working in Scratch, not a CLI or Python user. Lead with the behavior they observed, explain the change in terms of the named sprite and Scratch actions, and give reproduction steps they can perform in Scratch. Keep the technical repair record below available for review without requiring the student to understand block IDs or JSON. If the cause is a converter/runtime limitation, say that clearly instead of presenting it as a mistake in the student's work.
 
 When you finish, report:
 - the observed bug and reproduction path;

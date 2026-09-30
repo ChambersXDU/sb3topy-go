@@ -25,6 +25,8 @@ func main() {
 
 	var err error
 	switch args[0] {
+	case "inspect":
+		err = runInspect(args[1:], os.Stdout, os.Stderr)
 	case "to-python":
 		if len(args) < 2 {
 			printUsage()
@@ -69,7 +71,7 @@ func main() {
 	}
 
 	if err != nil {
-		fmt.Printf("\nOperation failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\nOperation failed: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -104,17 +106,21 @@ func printUsage() {
 Usage:
   %[1]s <project.sb3> [output-directory]       # Legacy form; equivalent to to-python
   %[1]s to-python <project.sb3> [output-directory]
+  %[1]s inspect [--json] [--target NAME] [--block ID] <project.sb3|workspace|project.py>
   %[1]s verify <workspace|project.py>
   %[1]s sync <workspace|project.py>
   %[1]s to-sb3 <workspace|project.py> [output.sb3]
 
 Recommended agent workflow:
-  1. %[1]s to-python game.sb3 ./work/game
-  2. Analyze work/game/project.py
-  3. Apply reversible edits to work/game/.sb3topy/project.json
-  4. %[1]s sync ./work/game
-  5. %[1]s verify ./work/game
-  6. %[1]s to-sb3 ./work/game repaired.sb3
+  1. %[1]s inspect --json game.sb3
+  2. %[1]s to-python game.sb3 ./work/game
+  3. %[1]s verify ./work/game
+  4. Analyze project.py and inspect --json --block BLOCK_ID ./work/game
+  5. Apply reversible edits to work/game/.sb3topy/project.json
+  6. %[1]s sync ./work/game
+  7. %[1]s verify ./work/game
+  8. %[1]s to-sb3 ./work/game repaired.sb3
+  9. Explain the change to the student and test repaired.sb3 in Scratch.
 
 Important:
   Arbitrary Python cannot be reliably decompiled into Scratch blocks.

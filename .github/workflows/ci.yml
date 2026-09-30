@@ -3,8 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - main
-      - 'feature/**'
+      - '**'
   pull_request:
 
 jobs:
@@ -23,6 +22,9 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Test Python runtime
+        run: python3 -B -m unittest discover -s tests -v
 
       - name: Build
         run: go build ./...

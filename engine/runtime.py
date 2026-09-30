@@ -184,6 +184,13 @@ class Sprites:
     def __getitem__(self, key):
         return self.targets[key]
 
+    def get_target(self, name):
+        """Return the stage or a sprite by its Scratch target name."""
+        if name == "_stage_" or (self.stage is not None and
+                                 name == self.stage.name):
+            return self.stage
+        return self.targets[name]
+
     def sprites(self):
         """Returns a iter of pygame sprites, top to bottom"""
         return reversed(self.group.sprites())
