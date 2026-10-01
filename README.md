@@ -40,7 +40,7 @@ sb3topy to-python game.sb3 ./work/game
 
 ```python
 # sb3topy:block id="move-1" opcode="motion_movesteps" kind=stack shadow=false
-self.move(10)
+self.move(tonum(10))
 ```
 
 `hat` marker 也使用带引号的 `id=` / `opcode=` 属性。嵌套 SUBSTACK、reporter、shadow、custom procedure 以及当前不支持或不可达的 block 都会得到唯一 source association；`kind=reporter` 和 `kind=unmapped` 可帮助代理区分生成位置。这样代理可以从 Python 逻辑直接定位到原 Scratch block ID。
@@ -94,6 +94,8 @@ sb3topy to-sb3 ./work/game repaired.sb3
 
 `sync` 会从 `.sb3topy/project.json` 重新生成规范的 `project.py`；`verify` 会确认两者完全一致（忽略换行符差异），并检查 manifest/hash、canonical JSON、原 SB3 ZIP 条目、被引用的造型和声音资源以及基础 block graph 完整性。`next`、`parent` 和 input/SUBSTACK 引用必须有效，明显循环会被拒绝。
 
+升级转换器后，旧工作区的 Python 可能与新生成器输出不同。先保留任何手动 Python 修改、把需要回到 Scratch 的改动落实到 canonical JSON，再使用新版本执行 `sync` 和 `verify`；`sync` 会覆盖 `project.py`。校验通过不代表 Python 与 Scratch 的运行行为完全一致，也不代表素材一定能解码，交付前仍需在 Scratch 中测试。
+
 如果只修改 `project.py` 而没有等价的 Scratch 表示，`verify` 和 `to-sb3` 会拒绝继续，而不是生成一个看似成功、实际丢失修改的文件。
 
 SB3 解压会拒绝绝对路径、`..`、反斜杠路径、重复条目和符号链接，以防止 Zip Slip。逆向打包会恢复 manifest 记录的所有原始非 `project.json` 条目，并加入 canonical JSON 新引用的素材。
@@ -124,6 +126,8 @@ python3 -B -m unittest discover -s tests -v
 go vet ./...
 go build ./...
 ```
+
+v1.2.1 的数值输入回归测试、38 个 SB3 样本验证结果及覆盖边界见 [验证记录](docs/validation-v1.2.1.md)。
 
 ## 许可
 

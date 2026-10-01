@@ -4,7 +4,7 @@
         "args": {
             "STEPS": "float"
         },
-        "code": "self.move({STEPS})"
+        "code": "self.move(tonum({STEPS}))"
     },
     "motion_turnright": {
         "type": "stack",
@@ -595,7 +595,7 @@
         "args": {
             "DURATION": "float"
         },
-        "code": "await self.sleep({DURATION})"
+        "code": "await self.sleep(max(0, tonum({DURATION})))"
     },
     "control_repeat": {
         "type": "stack",

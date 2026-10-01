@@ -104,6 +104,62 @@ func TestRoundTripVerifySyncAndReverse(t *testing.T) {
 	}
 }
 
+func TestSyncUpgradesWaitCodeWithoutChangingScratchJSON(t *testing.T) {
+	specData, err := os.ReadFile("../specmap_data.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := LoadSpecMap(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectJSON := []byte(`{
+		"targets": [{
+			"isStage": true, "name": "Stage",
+			"variables": {"wait": ["wait", "0.032"]}, "lists": {}, "broadcasts": {},
+			"blocks": {
+				"hat": {"opcode":"event_whenflagclicked","next":"wait","parent":null,"inputs":{},"fields":{},"shadow":false,"topLevel":true},
+				"wait": {"opcode":"control_wait","next":null,"parent":"hat","inputs":{"DURATION":[3,[12,"wait","wait"],[4,"1"]]},"fields":{},"shadow":false,"topLevel":false}
+			},
+			"costumes": [], "sounds": [], "layerOrder": 0
+		}]
+	}`)
+	current, err := TranspileProject(projectJSON, sm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(current, "self.sleep(max(0, tonum(self.var_wait)))", "self.sleep(self.var_wait)", 1)
+	if legacy == current {
+		t.Fatal("fixture did not restore the legacy wait code")
+	}
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "assets"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "project.py"), []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRoundTripMetadata(dir, projectJSON, []byte(legacy), "legacy.sb3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyRoundTripProject(dir, specData); err == nil || !strings.Contains(err.Error(), "converter upgrade") {
+		t.Fatalf("verify should explain generator drift, got: %v", err)
+	}
+	if err := SyncRoundTripProject(dir, specData); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyRoundTripProject(dir, specData); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "upgraded.sb3")
+	if err := Reverse(ReverseOptions{ProjectPath: dir, OutputSB3: output, SpecmapData: specData}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(readZipEntries(t, output)["project.json"], projectJSON) {
+		t.Fatal("upgrading generated Python changed the canonical Scratch project")
+	}
+}
+
 func TestHighFidelitySB3RoundTripAndCanonicalBlockEdit(t *testing.T) {
 	specData, err := os.ReadFile("../specmap_data.json")
 	if err != nil {
@@ -222,7 +278,7 @@ func TestHighFidelitySB3RoundTripAndCanonicalBlockEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(projectPy, []byte("self.move(20)")) {
+	if !bytes.Contains(projectPy, []byte("self.move(tonum(20))")) {
 		t.Fatalf("synced Python does not contain the edited literal:\n%s", projectPy)
 	}
 

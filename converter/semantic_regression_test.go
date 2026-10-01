@@ -422,6 +422,85 @@ util = SimpleNamespace(sprites=SimpleNamespace(stage=SimpleNamespace(list_items=
 	}
 }
 
+func TestTranspiledWaitAndMoveBlocksExecute(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not available")
+	}
+	specData, err := os.ReadFile("../specmap_data.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := LoadSpecMap(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markers := newMarkerState(&TargetJSON{
+		IsStage: true,
+		Variables: map[string]interface{}{
+			"wait": []interface{}{"wait", "0.032"},
+		},
+	})
+	blocks := map[string]*RawBlockData{
+		"interval": {
+			Opcode: "argument_reporter_string_number",
+			Fields: map[string]interface{}{"VALUE": []interface{}{"interval", nil}},
+		},
+	}
+	text := func(value string) []interface{} {
+		return []interface{}{1, []interface{}{10, value}}
+	}
+	inputs := []interface{}{
+		[]interface{}{1, []interface{}{4, "0"}},
+		text("2"),
+		text(" 0.125 "),
+		text("-2"),
+		text(""),
+		text("not a number"),
+		[]interface{}{3, []interface{}{12, "wait", "wait"}, []interface{}{4, "1"}},
+		[]interface{}{1, "interval"},
+	}
+	var script strings.Builder
+	script.WriteString(`import asyncio
+import runpy
+import sys
+tonum = runpy.run_path(sys.argv[1])["tonum"]
+class Target:
+    var_wait = "0.032"
+    def __init__(self):
+        self.delays = []
+        self.steps = []
+    async def sleep(self, duration):
+        assert isinstance(duration, (int, float)), repr(duration)
+        self.delays.append(duration)
+        await asyncio.sleep(0)
+    def move(self, steps):
+        assert isinstance(steps, (int, float)), repr(steps)
+        self.steps.append(steps)
+self = Target()
+interval = "2"
+async def run():
+`)
+	for _, input := range inputs {
+		block := &RawBlockData{Opcode: "control_wait", Inputs: map[string]interface{}{"DURATION": input}}
+		code := transpileSingleBlock(block, blocks, sm, "    ", markers)
+		script.WriteString(code + "\n")
+		move := &RawBlockData{Opcode: "motion_movesteps", Inputs: map[string]interface{}{"STEPS": input}}
+		script.WriteString(transpileSingleBlock(move, blocks, sm, "    ", markers) + "\n")
+	}
+	script.WriteString(`asyncio.run(run())
+assert self.delays == [0, 2, 0.125, 0, 0, 0, 0.032, 2], self.delays
+assert self.steps == [0, 2, 0.125, -2, 0, 0, 0.032, 2], self.steps
+`)
+	operators, err := filepath.Abs("../engine/operators.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(python, "-B", "-c", script.String(), operators).CombinedOutput(); err != nil {
+		t.Fatalf("transpiled waits and moves failed: %v\n%s\n%s", err, output, script.String())
+	}
+}
+
 func assertPythonCompiles(t *testing.T, source string) {
 	t.Helper()
 	python, err := exec.LookPath("python3")
