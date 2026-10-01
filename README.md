@@ -66,6 +66,8 @@ sb3topy inspect --json game.sb3
 
 `--json` 在 stdout 输出完整 JSON，错误输出到 stderr，方便 agent 直接解析。报告带有 `schemaVersion`、角色索引、脚本 block ID 和事件字段（例如按键或广播名）、扩展列表、基础积木图检查和 Python 生成状态；`issues` 给出已检测到的未支持积木或输入，以及角色、block ID、opcode 和 `generatedPythonLine`。
 
+每个角色还包含 `translationCounts`，选中的积木包含 `translationStatus`：`implemented` 表示有生成实现且未检测到已知限制，`partial` 表示只有部分行为，`unsupported` 表示积木或所需输入无法执行，`unmapped` 表示未关联到可执行脚本，`unavailable` 表示未能生成可分析的位置。这些状态不是与 Scratch 完全等价的证明。已知占位或近似行为也会报告，例如没有气泡显示、边缘反弹使用 pygame 像素边界、监视器只有控制台输出，以及计时器事件的调度限制。无法转换的 reporter 会使依赖它的表达式或积木报告 `unsupported_input`，不会被偷偷替换成默认步数或变量值；原 Scratch 数据仍被保留。
+
 需要查一个具体积木时，按学生说的角色名和源映射里的 ID 缩小范围：
 
 ```bash
@@ -94,6 +96,8 @@ sb3topy to-sb3 ./work/game repaired.sb3
 
 `sync` 会从 `.sb3topy/project.json` 重新生成规范的 `project.py`；`verify` 会确认两者完全一致（忽略换行符差异），并检查 manifest/hash、canonical JSON、原 SB3 ZIP 条目、被引用的造型和声音资源以及基础 block graph 完整性。`next`、`parent` 和 input/SUBSTACK 引用必须有效，明显循环会被拒绝。
 
+对于部分旧 Scratch 项目，自定义积木原型会缺少父链接和参数 shadow 的输入链接。只有在定义和参数元数据能够唯一确定这些关系时，校验视图才会补全它们；不会改写 canonical JSON，也不会普遍放宽其它积木的引用检查。
+
 升级转换器后，旧工作区的 Python 可能与新生成器输出不同。先保留任何手动 Python 修改、把需要回到 Scratch 的改动落实到 canonical JSON，再使用新版本执行 `sync` 和 `verify`；`sync` 会覆盖 `project.py`。校验通过不代表 Python 与 Scratch 的运行行为完全一致，也不代表素材一定能解码，交付前仍需在 Scratch 中测试。
 
 如果只修改 `project.py` 而没有等价的 Scratch 表示，`verify` 和 `to-sb3` 会拒绝继续，而不是生成一个看似成功、实际丢失修改的文件。
@@ -114,6 +118,7 @@ skills/scratch-sb3-roundtrip/SKILL.md
 
 ```bash
 cd work/game
+python3 -m pip install pygame==2.6.1
 python3 project.py
 ```
 
@@ -122,12 +127,15 @@ python3 project.py
 ```bash
 gofmt -w .
 go test ./...
+python3 -m pip install pygame==2.6.1
 python3 -B -m unittest discover -s tests -v
 go vet ./...
 go build ./...
 ```
 
 v1.2.1 的数值输入回归测试、38 个 SB3 样本验证结果及覆盖边界见 [验证记录](docs/validation-v1.2.1.md)。
+
+后续运行语义、跨角色克隆、转换限制报告和旧自定义积木兼容性的验证见 [运行语义验证记录](docs/validation-runtime-semantics.md)。Python 行为测试生成真实 SB3，通过 CLI 转换、校验和往返后再检查分数、血量、坐标、克隆、等待顺序与 reporter 结果；缺少 Go 或 pygame 时，这组行为测试会明确跳过，CI 和 Release 流程会安装依赖并执行它们。
 
 ## 许可
 

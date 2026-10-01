@@ -207,6 +207,7 @@ type markerState struct {
 	targetIsStage    bool
 	localVariableIDs map[string]bool
 	localListIDs     map[string]bool
+	inputFailures    []bool
 }
 
 func newMarkerState(target *TargetJSON) *markerState {
@@ -246,6 +247,10 @@ func (s *markerState) queue(blockID string) {
 	if blockID != "" && !s.emitted[blockID] {
 		s.pending[blockID] = true
 	}
+}
+
+func (s *markerState) inputFailed() bool {
+	return len(s.inputFailures) > 0 && s.inputFailures[len(s.inputFailures)-1]
 }
 
 func (s *markerState) snapshotPending() map[string]bool {
@@ -340,7 +345,10 @@ func transpileTargetBlocks(target *TargetJSON, sm *SpecMap) string {
 			source := strings.ToLower(getFieldVal(hatBlock, "WHENGREATERTHANMENU", "timer"))
 			value := transpileInput(hatBlock, "VALUE", blocksMap, sm, "10", markers)
 			methodName = "on_" + CleanIdentifier(source, "greater")
-			decorator = fmt.Sprintf("@on_greater(%s, %s)", QuoteField(source), value)
+			decorator = fmt.Sprintf("@on_greater(%s, lambda self, util: %s)", QuoteField(source), value)
+			if input, exists := hatBlock.Inputs["VALUE"]; exists && strings.TrimSpace(parseInputValue(input, blocksMap, sm, markers)) == "" {
+				decorator = fmt.Sprintf("# sb3topy:unsupported-input opcode=%s", QuoteString(opcode))
+			}
 		case "control_start_as_clone":
 			methodName = "clone_start"
 			decorator = "@on_clone_start"
@@ -459,7 +467,20 @@ func transpileBlockStack(startBlockID interface{}, blocksMap map[string]*RawBloc
 	return sb.String()
 }
 
-func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockData, sm *SpecMap, indent string, markers *markerState) string {
+func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockData, sm *SpecMap, indent string, markers *markerState) (code string) {
+	markers.inputFailures = append(markers.inputFailures, false)
+	defer func() {
+		last := len(markers.inputFailures) - 1
+		failed := markers.inputFailures[last]
+		markers.inputFailures = markers.inputFailures[:last]
+		if failed {
+			code = fmt.Sprintf("%spass  # sb3topy:unsupported-input opcode=%s", indent, QuoteString(block.Opcode))
+		}
+	}()
+	return transpileBlockCode(block, blocksMap, sm, indent, markers)
+}
+
+func transpileBlockCode(block *RawBlockData, blocksMap map[string]*RawBlockData, sm *SpecMap, indent string, markers *markerState) string {
 	opcode := block.Opcode
 
 	// Shadow / Menu blocks return string literal value directly
@@ -485,6 +506,9 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 
 	case "control_repeat":
 		times := transpileInput(block, "TIMES", blocksMap, sm, "10", markers)
+		if markers.inputFailed() {
+			return ""
+		}
 		var body strings.Builder
 		body.WriteString(fmt.Sprintf("%sfor _ in range(toint(%s)):\n", indent, times))
 		subStack := getSubstack(block, "SUBSTACK")
@@ -497,9 +521,12 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return body.String()
 
 	case "control_if":
-		cond := transpileInput(block, "CONDITION", blocksMap, sm, "True", markers)
+		cond := transpileInput(block, "CONDITION", blocksMap, sm, "False", markers)
+		if markers.inputFailed() {
+			return ""
+		}
 		var body strings.Builder
-		body.WriteString(fmt.Sprintf("%sif %s:\n", indent, cond))
+		body.WriteString(fmt.Sprintf("%sif tobool(%s):\n", indent, cond))
 		subStack := getSubstack(block, "SUBSTACK")
 		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ", markers)
 		if subCode == "" {
@@ -509,9 +536,12 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return body.String()
 
 	case "control_if_else":
-		cond := transpileInput(block, "CONDITION", blocksMap, sm, "True", markers)
+		cond := transpileInput(block, "CONDITION", blocksMap, sm, "False", markers)
+		if markers.inputFailed() {
+			return ""
+		}
 		var body strings.Builder
-		body.WriteString(fmt.Sprintf("%sif %s:\n", indent, cond))
+		body.WriteString(fmt.Sprintf("%sif tobool(%s):\n", indent, cond))
 		subStack1 := getSubstack(block, "SUBSTACK")
 		subCode1 := transpileBlockStack(subStack1, blocksMap, sm, indent+"    ", markers)
 		if subCode1 == "" {
@@ -530,8 +560,11 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 
 	case "control_repeat_until":
 		cond := transpileInput(block, "CONDITION", blocksMap, sm, "False", markers)
+		if markers.inputFailed() {
+			return ""
+		}
 		var body strings.Builder
-		body.WriteString(fmt.Sprintf("%swhile not (%s):\n", indent, cond))
+		body.WriteString(fmt.Sprintf("%swhile not tobool(%s):\n", indent, cond))
 		subStack := getSubstack(block, "SUBSTACK")
 		subCode := transpileBlockStack(subStack, blocksMap, sm, indent+"    ", markers)
 		if subCode == "" {
@@ -542,9 +575,9 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 		return body.String()
 
 	case "control_wait_until":
-		cond := transpileInput(block, "CONDITION", blocksMap, sm, "True", markers)
+		cond := transpileInput(block, "CONDITION", blocksMap, sm, "False", markers)
 		var body strings.Builder
-		body.WriteString(fmt.Sprintf("%swhile not (%s):\n", indent, cond))
+		body.WriteString(fmt.Sprintf("%swhile not tobool(%s):\n", indent, cond))
 		body.WriteString(indent + "    await self.yield_()\n")
 		return body.String()
 
@@ -610,7 +643,7 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 	case "motion_gotoxy":
 		x := transpileInput(block, "X", blocksMap, sm, "0", markers)
 		y := transpileInput(block, "Y", blocksMap, sm, "0", markers)
-		return fmt.Sprintf("%sself.gotoxy(%s, %s)", indent, x, y)
+		return fmt.Sprintf("%sself.gotoxy(tonum(%s), tonum(%s))", indent, x, y)
 
 	case "motion_goto":
 		to := transpileInput(block, "TO", blocksMap, sm, "\"_mouse_\"", markers)
@@ -722,35 +755,35 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 	case "operator_and":
 		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "False", markers)
 		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "False", markers)
-		return fmt.Sprintf("(%s and %s)", v1, v2)
+		return fmt.Sprintf("(tobool(%s) and tobool(%s))", v1, v2)
 
 	case "operator_or":
 		v1 := transpileInput(block, "OPERAND1", blocksMap, sm, "False", markers)
 		v2 := transpileInput(block, "OPERAND2", blocksMap, sm, "False", markers)
-		return fmt.Sprintf("(%s or %s)", v1, v2)
+		return fmt.Sprintf("(tobool(%s) or tobool(%s))", v1, v2)
 
 	case "operator_not":
 		v := transpileInput(block, "OPERAND", blocksMap, sm, "False", markers)
-		return fmt.Sprintf("not %s", v)
+		return fmt.Sprintf("(not tobool(%s))", v)
 
 	case "operator_join":
 		v1 := transpileInput(block, "STRING1", blocksMap, sm, "\"\"", markers)
 		v2 := transpileInput(block, "STRING2", blocksMap, sm, "\"\"", markers)
-		return fmt.Sprintf("(str(%s) + str(%s))", v1, v2)
+		return fmt.Sprintf("(tostr(%s) + tostr(%s))", v1, v2)
 
 	case "operator_letter_of":
 		text := transpileInput(block, "STRING", blocksMap, sm, "\"\"", markers)
 		index := transpileInput(block, "LETTER", blocksMap, sm, "1", markers)
-		return fmt.Sprintf("letter_of(str(%s), toint(%s))", text, index)
+		return fmt.Sprintf("letter_of(%s, %s)", text, index)
 
 	case "operator_length":
 		text := transpileInput(block, "STRING", blocksMap, sm, "\"\"", markers)
-		return fmt.Sprintf("len(str(%s))", text)
+		return fmt.Sprintf("string_length(%s)", text)
 
 	case "operator_contains":
 		text := transpileInput(block, "STRING1", blocksMap, sm, "\"\"", markers)
 		substring := transpileInput(block, "STRING2", blocksMap, sm, "\"\"", markers)
-		return fmt.Sprintf("(str(%s).lower() in str(%s).lower())", substring, text)
+		return fmt.Sprintf("(tostr(%s).lower() in tostr(%s).lower())", substring, text)
 
 	case "operator_round":
 		value := transpileInput(block, "NUM", blocksMap, sm, "0", markers)
@@ -924,6 +957,9 @@ func transpileInput(block *RawBlockData, key string, blocksMap map[string]*RawBl
 	}
 	res := strings.TrimSpace(parseInputValue(val, blocksMap, sm, markers))
 	if res == "" {
+		if len(markers.inputFailures) > 0 {
+			markers.inputFailures[len(markers.inputFailures)-1] = true
+		}
 		return defaultVal
 	}
 	return res

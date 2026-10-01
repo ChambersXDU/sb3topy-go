@@ -11,21 +11,21 @@
         "args": {
             "DEGREES": "float"
         },
-        "code": "self.direction += {DEGREES}"
+        "code": "self.direction += tonum({DEGREES})"
     },
     "motion_turnleft": {
         "type": "stack",
         "args": {
             "DEGREES": "float"
         },
-        "code": "self.direction -= {DEGREES}"
+        "code": "self.direction -= tonum({DEGREES})"
     },
     "motion_pointindirection": {
         "type": "stack",
         "args": {
             "DIRECTION": "float"
         },
-        "code": "self.direction = {DIRECTION}"
+        "code": "self.direction = tonum({DIRECTION})"
     },
     "motion_pointtowards": {
         "type": "stack",
@@ -40,7 +40,7 @@
             "X": "float",
             "Y": "float"
         },
-        "code": "self.gotoxy({X}, {Y})"
+        "code": "self.gotoxy(tonum({X}), tonum({Y}))"
     },
     "motion_goto": {
         "type": "stack",
@@ -56,7 +56,7 @@
             "X": "float",
             "Y": "float"
         },
-        "code": "await self.glide({SECS}, {X}, {Y})"
+        "code": "await self.glide(tonum({SECS}), tonum({X}), tonum({Y}))"
     },
     "motion_glideto": {
         "type": "stack",
@@ -64,40 +64,42 @@
             "SECS": "float",
             "TO": "str"
         },
-        "code": "await self.glideto(util, {SECS}, {TO})"
+        "code": "await self.glideto(util, tonum({SECS}), {TO})"
     },
     "motion_changexby": {
         "type": "stack",
         "args": {
             "DX": "float"
         },
-        "code": "self.xpos += {DX}"
+        "code": "self.xpos += tonum({DX})"
     },
     "motion_setx": {
         "type": "stack",
         "args": {
             "X": "float"
         },
-        "code": "self.xpos = {X}"
+        "code": "self.xpos = tonum({X})"
     },
     "motion_changeyby": {
         "type": "stack",
         "args": {
             "DY": "float"
         },
-        "code": "self.ypos += {DY}"
+        "code": "self.ypos += tonum({DY})"
     },
     "motion_sety": {
         "type": "stack",
         "args": {
             "Y": "float"
         },
-        "code": "self.ypos = {Y}"
+        "code": "self.ypos = tonum({Y})"
     },
     "motion_ifonedgebounce": {
         "type": "stack",
+        "support": "partial",
+        "limitation": "Edge bouncing uses integer-pixel pygame costume bounds; fencing and rendering precision may differ from Scratch.",
         "args": {},
-        "code": "self.bounce_on_edge()"
+        "code": "self.bounce_on_edge(util)"
     },
     "motion_setrotationstyle": {
         "type": "stack",
@@ -123,14 +125,18 @@
     },
     "looks_sayforsecs": {
         "type": "stack",
+        "support": "partial",
+        "limitation": "The duration is preserved, but speech bubbles are not rendered in Python.",
         "args": {
             "MESSAGE": "str",
             "SECS": "float"
         },
-        "code": "pass # looks_sayforsecs({MESSAGE}, {SECS})"
+        "code": "await self.sleep(max(0, tonum({SECS}))) # looks_sayforsecs({MESSAGE})"
     },
     "looks_say": {
         "type": "stack",
+        "support": "unsupported",
+        "limitation": "Speech bubbles are not rendered in Python. The Scratch block is preserved for round-trip conversion.",
         "args": {
             "MESSAGE": "str"
         },
@@ -138,14 +144,18 @@
     },
     "looks_thinkforsecs": {
         "type": "stack",
+        "support": "partial",
+        "limitation": "The duration is preserved, but thought bubbles are not rendered in Python.",
         "args": {
             "MESSAGE": "str",
             "SECS": "float"
         },
-        "code": "pass # looks_thinkforsecs({MESSAGE}, {SECS})"
+        "code": "await self.sleep(max(0, tonum({SECS}))) # looks_thinkforsecs({MESSAGE})"
     },
     "looks_think": {
         "type": "stack",
+        "support": "unsupported",
+        "limitation": "Thought bubbles are not rendered in Python. The Scratch block is preserved for round-trip conversion.",
         "args": {
             "MESSAGE": "str"
         },
@@ -525,6 +535,8 @@
         "basename": "on_backdrop_{BACKDROP}"
     },
     "event_whengreaterthan": {
+        "support": "partial",
+        "limitation": "Timer thresholds are checked between handler runs; transitions while the handler is waiting may be missed. Loudness threshold hats are not implemented in Python.",
         "type": "hat",
         "args": {
             "IDENT": "hat_ident",
@@ -1050,7 +1062,7 @@
             "OPERAND1": "bool",
             "OPERAND2": "bool"
         },
-        "code": "({OPERAND1} and {OPERAND2})"
+        "code": "(tobool({OPERAND1}) and tobool({OPERAND2}))"
     },
     "operator_or": {
         "type": "bool",
@@ -1058,14 +1070,14 @@
             "OPERAND1": "bool",
             "OPERAND2": "bool"
         },
-        "code": "({OPERAND1} or {OPERAND2})"
+        "code": "(tobool({OPERAND1}) or tobool({OPERAND2}))"
     },
     "operator_not": {
         "type": "bool",
         "args": {
             "OPERAND": "bool"
         },
-        "code": "not {OPERAND}"
+        "code": "(not tobool({OPERAND}))"
     },
     "operator_join": {
         "type": "str",
@@ -1073,7 +1085,7 @@
             "STRING1": "str",
             "STRING2": "str"
         },
-        "code": "({STRING1} + {STRING2})"
+        "code": "(tostr({STRING1}) + tostr({STRING2}))"
     },
     "operator_letter_of": {
         "type": "str",
@@ -1088,7 +1100,7 @@
         "args": {
             "STRING": "str"
         },
-        "code": "len({STRING})"
+        "code": "string_length({STRING})"
     },
     "operator_contains": {
         "type": "bool",
@@ -1096,7 +1108,7 @@
             "STRING1": "str",
             "STRING2": "str"
         },
-        "code": "({STRING2} in {STRING1})"
+        "code": "(tostr({STRING2}).lower() in tostr({STRING1}).lower())"
     },
     "operator_mod": {
         "type": "float",
@@ -1245,6 +1257,8 @@
     },
     "data_showvariable": {
         "type": "stack",
+        "support": "partial",
+        "limitation": "The value is printed to the console, but the Scratch variable monitor is not rendered.",
         "args": {
             "VARIABLE": "variable"
         },
@@ -1372,6 +1386,8 @@
     },
     "data_showlist": {
         "type": "stack",
+        "support": "partial",
+        "limitation": "The list is printed to the console, but the Scratch list monitor is not rendered.",
         "args": {
             "LIST": "list"
         },

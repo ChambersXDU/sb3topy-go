@@ -236,7 +236,7 @@ func TestTranspileMapsCommonHatsMenusAndFields(t *testing.T) {
 
 	assertContains(t, py, `@on_clicked`)
 	assertContains(t, py, `@on_backdrop('Backdrop 1')`)
-	assertContains(t, py, `@on_greater('timer', 10)`)
+	assertContains(t, py, `@on_greater('timer', lambda self, util: 10)`)
 	assertContains(t, py, `self.create_clone_of(util, "_myself_")`)
 	assertContains(t, py, `self.costume.rotation_style = 'left-right'`)
 	assertContains(t, py, `"Sprite Sprite\"\"\"Name"`)
@@ -297,9 +297,9 @@ func TestTranspileResolvesSpecSwitchesAndProducesValidPython(t *testing.T) {
 	}
 	assertContains(t, py, "self.front_layer(util)")
 	assertContains(t, py, "self.change_layer(util, -2)")
-	assertContains(t, py, `self.xpos = util.sprites.get_target("Sprite").xpos`)
-	assertContains(t, py, "self.ypos = sqrt(tonum(9))")
-	assertContains(t, py, "self.direction = time.localtime().tm_year")
+	assertContains(t, py, `self.xpos = tonum(util.sprites.get_target("Sprite").xpos)`)
+	assertContains(t, py, "self.ypos = tonum(sqrt(tonum(9)))")
+	assertContains(t, py, "self.direction = tonum(time.localtime().tm_year)")
 	assertContains(t, py, "self.var_value = self.costume.number")
 	assertContains(t, py, `pass  # sb3topy:unsupported-input opcode="motion_setx"`)
 	assertContains(t, py, `pass  # sb3topy:unsupported opcode="extension_not_supported"`)
@@ -335,9 +335,9 @@ func TestTranspileCoercesCommonScratchOperatorInputs(t *testing.T) {
 	}{
 		{"multiply", &RawBlockData{Opcode: "operator_multiply", Inputs: map[string]interface{}{"NUM1": variable, "NUM2": number("3")}}, `(tonum(self.var_value) * tonum(3))`},
 		{"random", &RawBlockData{Opcode: "operator_random", Inputs: map[string]interface{}{"FROM": variable, "TO": number("9")}}, `pick_rand(tonum(self.var_value), tonum(9))`},
-		{"letter", &RawBlockData{Opcode: "operator_letter_of", Inputs: map[string]interface{}{"STRING": number("123"), "LETTER": text("2")}}, `letter_of(str(123), toint("2"))`},
-		{"length", &RawBlockData{Opcode: "operator_length", Inputs: map[string]interface{}{"STRING": number("123")}}, `len(str(123))`},
-		{"contains", &RawBlockData{Opcode: "operator_contains", Inputs: map[string]interface{}{"STRING1": text("Hello"), "STRING2": text("EL")}}, `(str("EL").lower() in str("Hello").lower())`},
+		{"letter", &RawBlockData{Opcode: "operator_letter_of", Inputs: map[string]interface{}{"STRING": number("123"), "LETTER": text("2")}}, `letter_of(123, "2")`},
+		{"length", &RawBlockData{Opcode: "operator_length", Inputs: map[string]interface{}{"STRING": number("123")}}, `string_length(123)`},
+		{"contains", &RawBlockData{Opcode: "operator_contains", Inputs: map[string]interface{}{"STRING1": text("Hello"), "STRING2": text("EL")}}, `(tostr("EL").lower() in tostr("Hello").lower())`},
 		{"round", &RawBlockData{Opcode: "operator_round", Inputs: map[string]interface{}{"NUM": variable}}, `math.floor(tonum(self.var_value) + 0.5)`},
 		{"mathop", &RawBlockData{Opcode: "operator_mathop", Inputs: map[string]interface{}{"NUM": variable}, Fields: map[string]interface{}{"OPERATOR": []interface{}{"sqrt", nil}}}, `sqrt(tonum(self.var_value))`},
 		{"next backdrop", &RawBlockData{Opcode: "looks_nextbackdrop", Inputs: map[string]interface{}{}, Fields: map[string]interface{}{}}, "util.sprites.stage.costume.next()\nutil.send_event('backdrop_' + util.sprites.stage.costume.name, True)"},

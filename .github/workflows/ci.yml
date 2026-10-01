@@ -17,11 +17,18 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
-          check-latest: true
+          go-version-file: 'go.mod'
 
       - name: Test
         run: go test ./...
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install runtime test dependency
+        run: python3 -m pip install pygame==2.6.1
 
       - name: Test Python runtime
         run: python3 -B -m unittest discover -s tests -v
