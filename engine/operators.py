@@ -6,7 +6,7 @@ compatibility.
 """
 
 __all__ = [
-    'tonum', 'toint', 'letter_of', 'pick_rand',
+    'tonum', 'toint', 'tobool', 'tostr', 'string_length', 'letter_of', 'pick_rand',
     'gt', 'lt', 'eq', 'div', 'sqrt'
 ]
 
@@ -28,21 +28,52 @@ def tonum(value):
 
 
 def toint(value):
-    """Attempts to round a value to an int"""
+    """Round repeat counts as Scratch does, with ties toward positive infinity."""
     try:
-        return round(float(value))
-    except ValueError:
-        return 0
+        return math.floor(tonum(value) + 0.5)
     except OverflowError:
         return 0
 
 
+def tobool(value):
+    """Convert conditions using Scratch's string and numeric rules."""
+    if isinstance(value, str):
+        return value != '' and value != '0' and value.lower() != 'false'
+    if isinstance(value, float) and math.isnan(value):
+        return False
+    return bool(value)
+
+
+def tostr(value):
+    """Format values for Scratch's text reporters."""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if value is None:
+        return 'null'
+    if isinstance(value, float):
+        if math.isnan(value):
+            return 'NaN'
+        if math.isinf(value):
+            return 'Infinity' if value > 0 else '-Infinity'
+        if value.is_integer():
+            return str(int(value))
+    return str(value)
+
+
+def string_length(value):
+    """Count UTF-16 units, matching Scratch's character indexing."""
+    return len(tostr(value).encode('utf-16-le', errors='surrogatepass')) // 2
+
+
 def letter_of(text, index):
-    """Gets a letter from string"""
-    try:
-        return text[index - 1]
-    except IndexError:
+    """Read a one-based UTF-16 character using Scratch's bounds and truncation."""
+    text = tostr(text)
+    units = text.encode('utf-16-le', errors='surrogatepass')
+    offset = tonum(index) - 1
+    if offset < 0 or offset >= len(units) // 2:
         return ""
+    start = math.floor(offset) * 2
+    return units[start:start + 2].decode('utf-16-le', errors='surrogatepass')
 
 
 def pick_rand(number1, number2):
@@ -58,7 +89,7 @@ def gt(value1, value2):  # pylint: disable=invalid-name
     try:
         return float(value1) > float(value2)
     except ValueError:
-        return str(value1).lower() > str(value2).lower()
+        return tostr(value1).lower() > tostr(value2).lower()
 
 
 def lt(value1, value2):  # pylint: disable=invalid-name
@@ -66,7 +97,7 @@ def lt(value1, value2):  # pylint: disable=invalid-name
     try:
         return float(value1) < float(value2)
     except ValueError:
-        return str(value1).lower() < str(value2).lower()
+        return tostr(value1).lower() < tostr(value2).lower()
 
 
 def eq(value1, value2):  # pylint: disable=invalid-name
@@ -74,7 +105,7 @@ def eq(value1, value2):  # pylint: disable=invalid-name
     try:
         return float(value1) == float(value2)
     except ValueError:
-        return str(value1).lower() == str(value2).lower()
+        return tostr(value1).lower() == tostr(value2).lower()
 
 
 def div(value1, value2):

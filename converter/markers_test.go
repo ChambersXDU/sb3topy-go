@@ -120,7 +120,7 @@ func TestSourceMarkersCoverNestedReporterShadowAndProcedureBlocksOnce(t *testing
 	assertContains(t, py, `# sb3topy:block id="call" opcode="procedures_call" kind=stack shadow=false`)
 	equalsMarker := strings.Index(py, `# sb3topy:block id="equals"`)
 	ifMarker := strings.Index(py, `# sb3topy:block id="if"`)
-	ifCode := strings.Index(py, "if eq(1, 1):")
+	ifCode := strings.Index(py, "if tobool(eq(1, 1)):")
 	if equalsMarker < 0 || ifMarker < 0 || ifCode < 0 || !(equalsMarker < ifMarker && ifMarker < ifCode) {
 		t.Fatalf("condition reporter marker should be adjacent to and precede its stack block:\n%s", py)
 	}

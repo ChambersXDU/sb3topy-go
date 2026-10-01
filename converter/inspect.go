@@ -41,13 +41,14 @@ type Inspection struct {
 }
 
 type InspectedTarget struct {
-	Index      int               `json:"index"`
-	Name       string            `json:"name"`
-	IsStage    bool              `json:"isStage"`
-	BlockCount int               `json:"blockCount"`
-	Scripts    []InspectedScript `json:"scripts"`
-	Variables  []InspectedData   `json:"variables"`
-	Lists      []InspectedData   `json:"lists"`
+	Index             int               `json:"index"`
+	Name              string            `json:"name"`
+	IsStage           bool              `json:"isStage"`
+	BlockCount        int               `json:"blockCount"`
+	Scripts           []InspectedScript `json:"scripts"`
+	Variables         []InspectedData   `json:"variables"`
+	Lists             []InspectedData   `json:"lists"`
+	TranslationCounts map[string]int    `json:"translationCounts"`
 }
 
 type InspectedScript struct {
@@ -79,6 +80,7 @@ type InspectedBlock struct {
 	GeneratedPythonLine int             `json:"generatedPythonLine,omitempty"`
 	MarkerKind          string          `json:"markerKind,omitempty"`
 	Raw                 json.RawMessage `json:"raw"`
+	TranslationStatus   string          `json:"translationStatus"`
 }
 
 // Inspect reads the Scratch source without converting, synchronizing, or writing files.
@@ -148,6 +150,7 @@ func Inspect(opts InspectOptions) (*Inspection, error) {
 		detail := InspectedTarget{
 			Index: targetIndex, Name: target.Name, IsStage: target.IsStage, BlockCount: len(target.Blocks),
 			Scripts: []InspectedScript{}, Variables: inspectedData(target.Variables), Lists: inspectedData(target.Lists),
+			TranslationCounts: map[string]int{"implemented": 0, "partial": 0, "unsupported": 0, "unmapped": 0, "unavailable": 0},
 		}
 		blocksMap := make(map[string]*RawBlockData, len(target.Blocks))
 		ids := make([]string, 0, len(target.Blocks))
@@ -161,6 +164,8 @@ func Inspect(opts InspectOptions) (*Inspection, error) {
 		for _, id := range ids {
 			block := blocksMap[id]
 			location := locations[blockLocationKey{targetIndex, id}]
+			status, issueCode, message := inspectTranslation(block, blocksMap, sm, &target, location)
+			detail.TranslationCounts[status]++
 			if block != nil && block.TopLevel && sm.IsHat(block.Opcode) {
 				fields := block.Fields
 				if fields == nil {
@@ -171,17 +176,10 @@ func Inspect(opts InspectOptions) (*Inspection, error) {
 			if opts.BlockID == id {
 				foundBlock = true
 				raw := metadata.Targets[targetIndex].Blocks[id]
-				report.Blocks = append(report.Blocks, InspectedBlock{targetIndex, target.Name, id, location.line, location.kind, raw})
+				report.Blocks = append(report.Blocks, InspectedBlock{targetIndex, target.Name, id, location.line, location.kind, raw, status})
 			}
-			if block == nil || location.line == 0 || location.kind == "unmapped" || location.kind == "hat" {
+			if block == nil || location.line == 0 || location.kind == "unmapped" {
 				continue
-			}
-			code := strings.TrimSpace(transpileSingleBlock(block, blocksMap, sm, "", newMarkerState(&target)))
-			issueCode, message := "", ""
-			if strings.HasPrefix(code, "pass  # sb3topy:unsupported opcode=") {
-				issueCode, message = "unsupported_block", "No Python translation is available for this block. This is a converter limitation, not evidence of a Scratch project bug."
-			} else if strings.HasPrefix(code, "pass  # sb3topy:unsupported-input opcode=") {
-				issueCode, message = "unsupported_input", "An input has no usable Python translation. Inspect the referenced reporter blocks before changing the Scratch project."
 			}
 			if issueCode != "" && (opts.BlockID == "" || opts.BlockID == id) {
 				report.Issues = append(report.Issues, InspectionIssue{issueCode, targetIndex, target.Name, id, block.Opcode, location.line, message})
@@ -196,6 +194,44 @@ func Inspect(opts InspectOptions) (*Inspection, error) {
 		return nil, fmt.Errorf("block %q was not found in the selected targets", opts.BlockID)
 	}
 	return report, nil
+}
+
+func inspectTranslation(block *RawBlockData, blocks map[string]*RawBlockData, sm *SpecMap, target *TargetJSON, location blockLocation) (status, code, message string) {
+	if block == nil || location.line == 0 {
+		return "unavailable", "", ""
+	}
+	if location.kind == "unmapped" {
+		return "unmapped", "", ""
+	}
+	if location.kind == "hat" && block.Opcode == "event_whengreaterthan" {
+		if input, exists := block.Inputs["VALUE"]; exists && strings.TrimSpace(parseInputValue(input, blocks, sm, newMarkerState(target))) == "" {
+			return "unsupported", "unsupported_input", "The threshold input has no usable Python translation. This hat is not activated in Python."
+		}
+		if strings.ToLower(getFieldVal(block, "WHENGREATERTHANMENU", "timer")) != "timer" {
+			return "unsupported", "unsupported_block", "Loudness threshold hats are not implemented in Python. The Scratch script is preserved."
+		}
+	}
+	python := ""
+	if location.kind != "hat" {
+		python = strings.TrimSpace(transpileSingleBlock(block, blocks, sm, "", newMarkerState(target)))
+		if strings.HasPrefix(python, "pass  # sb3topy:unsupported-input opcode=") {
+			return "unsupported", "unsupported_input", "An input has no usable Python translation. Inspect the referenced reporter blocks before changing the Scratch project."
+		}
+	}
+	_, spec, ok := resolveBlockSpec(sm, block.Opcode, block)
+	if ok && spec.Support == "partial" {
+		return "partial", "partial_block", spec.Limitation
+	}
+	if ok && spec.Support == "unsupported" {
+		return "unsupported", "unsupported_block", spec.Limitation
+	}
+	if location.kind == "hat" {
+		return "implemented", "", ""
+	}
+	if strings.HasPrefix(python, "pass") {
+		return "unsupported", "unsupported_block", "No Python behavior is implemented for this block. This is a converter limitation, not evidence of a Scratch project bug."
+	}
+	return "implemented", "", ""
 }
 
 func inspectionCheck(err error) InspectionCheck {

@@ -71,6 +71,7 @@ func validateTargetBlocks(rawTarget json.RawMessage, targetIndex int) error {
 	for id := range blocks {
 		ids = append(ids, id)
 	}
+	linkLegacyProcedureShadows(blocks)
 	sort.Strings(ids)
 	for _, id := range ids {
 		block := blocks[id]
@@ -120,6 +121,62 @@ func validateTargetBlocks(rawTarget json.RawMessage, targetIndex int) error {
 		return fmt.Errorf("target[%d] has an invalid block graph: %w", targetIndex, err)
 	}
 	return nil
+}
+
+// Legacy Scratch projects can omit prototype parents and their argument input
+// links. Scratch resolves procedures from definitions and mutation metadata.
+// Reconstruct only this unambiguous shape in the validation view, never in the
+// canonical JSON retained for round-tripping.
+func linkLegacyProcedureShadows(blocks map[string]*RawBlockData) {
+	for prototypeID, prototype := range blocks {
+		if prototype.Opcode != "procedures_prototype" || !prototype.Shadow || prototype.TopLevel || prototype.Parent != nil || prototype.Next != nil || len(prototype.Inputs) != 0 {
+			continue
+		}
+		var names, argumentIDs []string
+		proccode, codeOK := prototype.Mutation["proccode"].(string)
+		namesJSON, namesOK := prototype.Mutation["argumentnames"].(string)
+		idsJSON, idsOK := prototype.Mutation["argumentids"].(string)
+		if !codeOK || proccode == "" || !namesOK || !idsOK || json.Unmarshal([]byte(namesJSON), &names) != nil || json.Unmarshal([]byte(idsJSON), &argumentIDs) != nil || names == nil || argumentIDs == nil || len(names) != len(argumentIDs) {
+			continue
+		}
+		seenIDs, seenNames, valid := map[string]bool{}, map[string]bool{}, true
+		for i, name := range names {
+			if name == "" || argumentIDs[i] == "" || seenIDs[argumentIDs[i]] || seenNames[name] {
+				valid = false
+				break
+			}
+			seenIDs[argumentIDs[i]], seenNames[name] = true, true
+		}
+		if !valid {
+			continue
+		}
+		definitionID := ""
+		definitions := 0
+		for id, definition := range blocks {
+			if definition.Opcode == "procedures_definition" && definition.TopLevel && definition.Parent == nil && getSubstack(definition, "custom_block") == prototypeID {
+				definitionID = id
+				definitions++
+			}
+		}
+		if definitions != 1 {
+			continue
+		}
+		prototype.Parent = definitionID
+		inputs := map[string]interface{}{}
+		for i, name := range names {
+			shadowID, shadowCount := "", 0
+			for id, shadow := range blocks {
+				if blockID(shadow.Parent) == prototypeID && shadow.Shadow && !shadow.TopLevel && shadow.Next == nil && len(shadow.Inputs) == 0 &&
+					(shadow.Opcode == "argument_reporter_string_number" || shadow.Opcode == "argument_reporter_boolean") && getFieldVal(shadow, "VALUE", "") == name {
+					shadowID, shadowCount = id, shadowCount+1
+				}
+			}
+			if shadowCount == 1 {
+				inputs[argumentIDs[i]] = []interface{}{1, shadowID}
+			}
+		}
+		prototype.Inputs = inputs
+	}
 }
 
 func optionalBlockLink(value interface{}, blocks map[string]*RawBlockData, label string) (string, error) {

@@ -107,6 +107,37 @@ func mustInspectionSpecMap(t *testing.T) *SpecMap {
 	return sm
 }
 
+func TestInspectReportsPartialTimingAndUnimplementedBubbles(t *testing.T) {
+	project := []byte(`{"targets":[{"isStage":true,"name":"Stage","blocks":{
+		"hat":{"opcode":"event_whenflagclicked","topLevel":true,"parent":null,"next":"say"},
+		"say":{"opcode":"looks_sayforsecs","parent":"hat","next":"think","inputs":{"MESSAGE":[1,[10,"hello"]],"SECS":[1,[10,"0.1"]]}},
+		"think":{"opcode":"looks_think","parent":"say","next":"hide","inputs":{"MESSAGE":[1,[10,"hmm"]]}},
+		"hide":{"opcode":"data_hidevariable","parent":"think","next":null,"fields":{"VARIABLE":["score","v"]}}
+	},"variables":{"v":["score",0]}}]}`)
+	path := filepath.Join(t.TempDir(), "bubbles.sb3")
+	writeSB3Fixture(t, path, project, nil)
+	report, err := Inspect(InspectOptions{Path: path, SpecmapData: inspectionSpec(t), BlockID: "say"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Blocks) != 1 || report.Blocks[0].TranslationStatus != "partial" || len(report.Issues) != 1 || report.Issues[0].Code != "partial_block" {
+		t.Fatalf("partial translation was not reported: %+v", report)
+	}
+	report, err = Inspect(InspectOptions{Path: path, SpecmapData: inspectionSpec(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := report.Targets[0].TranslationCounts
+	if counts["implemented"] != 1 || counts["partial"] != 1 || counts["unsupported"] != 2 || len(report.Issues) != 3 {
+		t.Fatalf("placeholder behaviors were hidden: %+v", report)
+	}
+	python, err := TranspileProject(project, mustInspectionSpecMap(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, python, `await self.sleep(max(0, tonum("0.1")))`)
+}
+
 func TestInspectBlockSelectionPreservesUnknownFieldsAndTargetIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "game.sb3")
 	writeSB3Fixture(t, path, []byte(inspectionFixture), nil)

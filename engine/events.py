@@ -8,6 +8,7 @@ TODO Clean up event names
 from functools import wraps
 
 from .types import Target
+from .operators import tonum
 
 __all__ = [
     'on_green_flag', 'on_pressed', 'on_clicked',
@@ -58,16 +59,18 @@ def on_backdrop(backdrop):
     return decorator
 
 
-# TODO Proper when timer greater behavior
 def on_greater(source, value=None):
     """Binds a function the the timer greater than event"""
     def decorator(func):
         @wraps(func)
         async def wrapper(self, util):
-            # Run func when the timer is greater
+            previous = False
             while True:
-                if value is None or util.timer() > value:
+                threshold = value(self, util) if callable(value) else value
+                current = value is None or util.timer() > tonum(threshold)
+                if current and not previous:
                     await func(self, util)
+                previous = current
                 await self.yield_()
 
         # Return the timer wrapper

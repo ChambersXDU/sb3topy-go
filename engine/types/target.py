@@ -244,7 +244,7 @@ class Target:
         startx, starty = self.xpos, self.ypos
         while elapsed < duration:
             elapsed = time.monotonic() - start_time
-            frac = elapsed / duration
+            frac = min(1, elapsed / duration)
             self.xpos = startx + frac*(endx - startx)
             self.ypos = starty + frac*(endy - starty)
 
@@ -281,9 +281,35 @@ class Target:
 
         return None
 
-    def bounce_on_edge(self):
-        """If on edge, bounce. Not implemented."""
-        # TODO Bounce on edge
+    def bounce_on_edge(self, util):
+        """Reflect away from the nearest edge using the rendered costume bounds."""
+        display = util.display
+        self.update(display)
+        bounds = self.sprite.image.get_bounding_rect().move(self.sprite.rect.topleft)
+        if not bounds.width or not bounds.height:
+            return
+        stage = display.rect
+        distances = (max(0, bounds.left - stage.left), max(0, bounds.top - stage.top),
+                     max(0, stage.right - bounds.right), max(0, stage.bottom - bounds.bottom))
+        edge = min(range(4), key=distances.__getitem__)
+        if distances[edge] > 0:
+            return
+        radians = math.radians(90 - self.direction)
+        dx, dy = math.cos(radians), -math.sin(radians)
+        if edge == 0:
+            dx = max(0.2, abs(dx))
+        elif edge == 1:
+            dy = max(0.2, abs(dy))
+        elif edge == 2:
+            dx = -max(0.2, abs(dx))
+        else:
+            dy = -max(0.2, abs(dy))
+        self.direction = math.degrees(math.atan2(dy, dx)) + 90
+        self.update(display)
+        bounds = self.sprite.image.get_bounding_rect().move(self.sprite.rect.topleft)
+        fenced = bounds.clamp(stage)
+        self.gotoxy(self.xpos + (fenced.left - bounds.left) / display.scale,
+                    self.ypos - (fenced.top - bounds.top) / display.scale)
 
     @property
     def rotation_style(self):
@@ -540,7 +566,7 @@ class Target:
             # Then move it back to the top leaving an empty space
             group = util.sprites.group
             top = group.get_top_layer()
-            bottom = group.get_layer_of_sprite(self.sprite)
+            bottom = group.get_layer_of_sprite(target.sprite)
             top_sprite = group.get_top_sprite()
             self._move_layers(group, top, bottom-top)
             group.change_layer(top_sprite, top+1)
@@ -548,7 +574,7 @@ class Target:
             # __class__ is the Sprite's subclass
             clone = target.__class__(target)
             self._clones.append(clone)  # Shared between targets
-            self.clones.append(clone)
+            target.clones.append(clone)
             group.add(clone.sprite, layer=bottom)
             util.events.send_to(util, clone, "clone_start")
         else:

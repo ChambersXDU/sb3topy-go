@@ -63,6 +63,7 @@ func runInspect(args []string, output, errorOutput io.Writer) error {
 			kind = "Stage"
 		}
 		fmt.Fprintf(output, "\n%s %q (target index %d): %d blocks, %d scripts, %d variables, %d lists\n", kind, target.Name, target.Index, target.BlockCount, len(target.Scripts), len(target.Variables), len(target.Lists))
+		fmt.Fprintf(output, "  Translation: %d implemented, %d partial, %d unsupported, %d unmapped, %d unavailable\n", target.TranslationCounts["implemented"], target.TranslationCounts["partial"], target.TranslationCounts["unsupported"], target.TranslationCounts["unmapped"], target.TranslationCounts["unavailable"])
 		for _, script := range target.Scripts {
 			fmt.Fprintf(output, "  Script: id=%q opcode=%s\n", script.ID, script.Opcode)
 		}
@@ -72,7 +73,7 @@ func runInspect(args []string, output, errorOutput io.Writer) error {
 		fmt.Fprintf(output, "  %s: target=%q block=%q opcode=%s generatedPythonLine=%d\n    %s\n", issue.Code, issue.Target, issue.BlockID, issue.Opcode, issue.GeneratedPythonLine, issue.Message)
 	}
 	for _, block := range report.Blocks {
-		fmt.Fprintf(output, "\nBlock %q in %q (target index %d, generatedPythonLine=%d, kind=%s):\n", block.ID, block.Target, block.TargetIndex, block.GeneratedPythonLine, block.MarkerKind)
+		fmt.Fprintf(output, "\nBlock %q in %q (target index %d, generatedPythonLine=%d, kind=%s, translation=%s):\n", block.ID, block.Target, block.TargetIndex, block.GeneratedPythonLine, block.MarkerKind, block.TranslationStatus)
 		encoder := json.NewEncoder(output)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(block.Raw); err != nil {
