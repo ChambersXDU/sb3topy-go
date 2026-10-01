@@ -171,7 +171,7 @@ func VerifyRoundTripProject(projectPath string, specmapData []byte) error {
 	}
 
 	if !bytes.Equal(normalizeLineEndings(projectPy), normalizeLineEndings([]byte(expected))) {
-		return fmt.Errorf("project.py does not match .sb3topy/project.json; Python-only edits cannot be safely restored to Scratch. Apply the edit to .sb3topy/project.json, then run sync and verify")
+		return fmt.Errorf("project.py does not match the current generator output for .sb3topy/project.json; this may result from Python-only edits or a converter upgrade. Preserve any Python-only edits and apply reversible changes to .sb3topy/project.json, then run sync and verify")
 	}
 	if sha256Hex(projectJSON) != manifest.ProjectJSONSHA256 {
 		return fmt.Errorf("canonical .sb3topy/project.json changed without a completed sync; run sb3topy sync before verify")

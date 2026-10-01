@@ -550,7 +550,7 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 
 	case "control_wait":
 		duration := transpileInput(block, "DURATION", blocksMap, sm, "1", markers)
-		return fmt.Sprintf("%sawait self.sleep(%s)", indent, duration)
+		return fmt.Sprintf("%sawait self.sleep(max(0, tonum(%s)))", indent, duration)
 
 	case "data_setvariableto":
 		ref := dataReferenceFromField(block, "VARIABLE", "var", "variable", markers)
@@ -605,7 +605,7 @@ func transpileSingleBlock(block *RawBlockData, blocksMap map[string]*RawBlockDat
 
 	case "motion_movesteps":
 		steps := transpileInput(block, "STEPS", blocksMap, sm, "10", markers)
-		return fmt.Sprintf("%sself.move(%s)", indent, steps)
+		return fmt.Sprintf("%sself.move(tonum(%s))", indent, steps)
 
 	case "motion_gotoxy":
 		x := transpileInput(block, "X", blocksMap, sm, "0", markers)

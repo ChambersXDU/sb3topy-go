@@ -56,7 +56,7 @@ func TestSpecMapFormatting(t *testing.T) {
 
 	// Test motion_movesteps formatting
 	code := sm.FormatCode("motion_movesteps", map[string]string{"STEPS": "10"})
-	if code != "self.move(10)" {
-		t.Errorf("FormatCode motion_movesteps = %q; want %q", code, "self.move(10)")
+	if code != "self.move(tonum(10))" {
+		t.Errorf("FormatCode motion_movesteps = %q; want %q", code, "self.move(tonum(10))")
 	}
 }
